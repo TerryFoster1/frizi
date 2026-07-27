@@ -830,7 +830,7 @@ function HeroSearch({
       <div className="relative mx-auto flex min-h-[76svh] max-w-6xl flex-col justify-end px-4 pb-10 sm:px-6 lg:px-8">
         <div className="max-w-3xl">
           <h1 className="text-5xl font-black leading-[0.95] tracking-normal sm:text-7xl">
-            Book your professional. Save what works.
+            Find your style
           </h1>
           <p className="mt-5 max-w-2xl text-lg font-semibold leading-8 text-white/76">
             Search for the right stylist, barber, or colour professional, then keep your haircut photos, preferences, and appointment history together.
