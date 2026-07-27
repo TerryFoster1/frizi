@@ -72,6 +72,13 @@ const defaultTipChoice: TipChoice = 18;
 
 type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
 
+type FilterState = {
+  distanceKm: number;
+  serviceType: string;
+  specialty: string;
+  accessibility: string;
+};
+
 type InvitationFixture = {
   token: string;
   professionalId: string;
@@ -98,6 +105,24 @@ type InfoPage = {
 
 const sampleQuery =
   'I am looking for a muslim friendly barber near me who is good at fades.';
+
+const defaultFilters: FilterState = {
+  distanceKm: 5,
+  serviceType: 'Any service',
+  specialty: 'Any specialty',
+  accessibility: 'Any accessibility',
+};
+
+const serviceTypeOptions = ['Any service', 'Haircut', 'Fades', 'Curls', 'Color', 'Protective styles', 'Blowout'];
+const specialtyOptions = ['Any specialty', 'Fine hair', 'Curly cuts', 'Fades', 'Protective styles', 'Color consults', 'Pixies'];
+const accessibilityOptions = [
+  'Any accessibility',
+  'Quiet appointment',
+  'Private room',
+  'Hijab-friendly space',
+  'Muslim friendly',
+  'Fragrance aware',
+];
 
 const invitationFixtures: InvitationFixture[] = [
   {
@@ -426,8 +451,9 @@ const infoPages: Record<string, InfoPage> = {
 function App() {
   const inviteToken = window.location.pathname.match(/^\/invite\/([^/?#]+)/)?.[1];
   const infoPageMatch = window.location.pathname.match(/^\/(help|policies)\/([^/?#]+)/);
-  const [query, setQuery] = useState(sampleQuery);
-  const [submittedQuery, setSubmittedQuery] = useState(sampleQuery);
+  const [query, setQuery] = useState('');
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [activeIndex, setActiveIndex] = useState(0);
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [activeClientNav, setActiveClientNav] = useState<ClientNavKey | null>(null);
@@ -436,10 +462,14 @@ function App() {
   const [booking, setBooking] = useState<BookingRequest | null>(null);
   const [isListening, setIsListening] = useState(false);
 
-  const rankedProfiles = useMemo(() => rankProfessionals(submittedQuery), [submittedQuery]);
-  const activeProfile = rankedProfiles[activeIndex % rankedProfiles.length];
-  const activeService = selectedService || activeProfile.services[0].name;
-  const activeTime = selectedTime || activeProfile.bookingSlots[0];
+  const hasSearched = submittedQuery.trim().length > 0;
+  const rankedProfiles = useMemo(
+    () => (hasSearched ? rankProfessionals(submittedQuery, filters) : []),
+    [filters, hasSearched, submittedQuery],
+  );
+  const activeProfile = rankedProfiles.length > 0 ? rankedProfiles[activeIndex % rankedProfiles.length] : null;
+  const activeService = activeProfile ? selectedService || activeProfile.services[0].name : '';
+  const activeTime = activeProfile ? selectedTime || activeProfile.bookingSlots[0] : '';
 
   if (infoPageMatch) {
     const pageKey = `${infoPageMatch[1]}/${infoPageMatch[2]}`;
@@ -463,7 +493,9 @@ function App() {
   }
 
   function submitSearch() {
-    setSubmittedQuery(query.trim() || sampleQuery);
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) return;
+    setSubmittedQuery(trimmedQuery);
     setActiveIndex(0);
     setSelectedService('');
     setSelectedTime('');
@@ -482,6 +514,7 @@ function App() {
   }
 
   function moveDeck(direction: 'previous' | 'next') {
+    if (rankedProfiles.length === 0) return;
     setSelectedService('');
     setSelectedTime('');
     setBooking(null);
@@ -500,6 +533,7 @@ function App() {
   }
 
   function confirmBooking() {
+    if (!activeProfile) return;
     const eventId = `booking_requested:${activeProfile.id}:${Date.now().toString().slice(-5)}`;
     setBooking({
       professional: activeProfile.name,
@@ -525,18 +559,21 @@ function App() {
       </header>
 
       {activeClientNav ? (
-        <ClientNavScreen
+          <ClientNavScreen
           activeNav={activeClientNav}
           booking={booking}
           onBookSaved={(profileId) => {
-            const index = rankedProfiles.findIndex((profile) => profile.id === profileId);
+            const index = professionals.findIndex((profile) => profile.id === profileId);
             if (index >= 0) {
-              setActiveIndex(index);
+              const profile = professionals[index];
+              setSubmittedQuery(profile.name);
+              setQuery(profile.name);
+              setActiveIndex(0);
               setActiveClientNav(null);
               window.setTimeout(() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' }), 50);
             }
           }}
-          savedProfiles={rankedProfiles.filter((profile) => savedIds.includes(profile.id))}
+          savedProfiles={professionals.filter((profile) => savedIds.includes(profile.id))}
         />
       ) : (
         <>
@@ -546,30 +583,37 @@ function App() {
             onSubmit={submitSearch}
             query={query}
             setQuery={setQuery}
+            filters={filters}
+            setFilters={setFilters}
+            hasSearched={hasSearched}
+            resultCount={rankedProfiles.length}
           />
-          <section className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,480px)_1fr] lg:items-start lg:px-8">
-            <aside className="lg:sticky lg:top-24">
-              <DeckCard
-                activeIndex={activeIndex}
-                isSaved={savedIds.includes(activeProfile.id)}
-                onNext={() => moveDeck('next')}
-                onPrevious={() => moveDeck('previous')}
-                onToggleSaved={() => toggleSaved(activeProfile.id)}
-                profile={activeProfile}
-                total={rankedProfiles.length}
-              />
-            </aside>
+          {hasSearched && activeProfile ? (
+            <section className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,480px)_1fr] lg:items-start lg:px-8">
+              <aside className="lg:sticky lg:top-24">
+                <DeckCard
+                  activeIndex={activeIndex}
+                  isSaved={savedIds.includes(activeProfile.id)}
+                  onNext={() => moveDeck('next')}
+                  onPrevious={() => moveDeck('previous')}
+                  onToggleSaved={() => toggleSaved(activeProfile.id)}
+                  profile={activeProfile}
+                  total={rankedProfiles.length}
+                />
+              </aside>
 
-            <ProfileDetails
-              booking={booking}
-              onBook={confirmBooking}
-              profile={activeProfile}
-              selectedService={activeService}
-              selectedTime={activeTime}
-              setSelectedService={setSelectedService}
-              setSelectedTime={setSelectedTime}
-            />
-          </section>
+              <ProfileDetails
+                booking={booking}
+                onBook={confirmBooking}
+                profile={activeProfile}
+                selectedService={activeService}
+                selectedTime={activeTime}
+                setSelectedService={setSelectedService}
+                setSelectedTime={setSelectedTime}
+              />
+            </section>
+          ) : null}
+          {hasSearched && !activeProfile ? <NoLocalMatches /> : null}
         </>
       )}
       <ClientFooter activeNav={activeClientNav} onChange={setActiveClientNav} />
@@ -807,27 +851,41 @@ function InviteLanding({
 }
 
 function HeroSearch({
+  filters,
+  hasSearched,
   isListening,
   onMic,
   onSubmit,
   query,
+  resultCount,
+  setFilters,
   setQuery,
 }: {
+  filters: FilterState;
+  hasSearched: boolean;
   isListening: boolean;
   onMic: () => void;
   onSubmit: () => void;
   query: string;
+  resultCount: number;
+  setFilters: (value: FilterState) => void;
   setQuery: (value: string) => void;
 }) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  function updateFilter<Key extends keyof FilterState>(key: Key, value: FilterState[Key]) {
+    setFilters({ ...filters, [key]: value });
+  }
+
   return (
-    <section className="relative min-h-[76svh] overflow-hidden pt-20">
+    <section className="relative h-[100svh] overflow-hidden pt-20">
       <img
         className="absolute inset-0 h-full w-full object-cover"
         src="https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1800&q=85"
         alt=""
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/44 to-[#080808]" />
-      <div className="relative mx-auto flex min-h-[76svh] max-w-6xl flex-col justify-end px-4 pb-10 sm:px-6 lg:px-8">
+      <div className="relative mx-auto flex h-full max-w-6xl flex-col justify-end px-4 pb-28 sm:px-6 lg:px-8">
         <div className="max-w-3xl">
           <h1 className="text-5xl font-black leading-[0.95] tracking-normal sm:text-7xl">
             Find your style
@@ -851,7 +909,7 @@ function HeroSearch({
                     onSubmit();
                   }
                 }}
-                placeholder="find me a stylist who..."
+                placeholder="I am looking for....."
               />
               <button
                 aria-label="Demo voice search"
@@ -867,6 +925,65 @@ function HeroSearch({
             <button className="mt-3 min-h-12 w-full rounded-2xl bg-[#f4c430] px-5 font-black text-black" type="button" onClick={onSubmit}>
               Search
             </button>
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04]">
+              <button
+                className="flex min-h-12 w-full items-center justify-between gap-3 px-4 text-left"
+                type="button"
+                onClick={() => setFiltersOpen((current) => !current)}
+              >
+                <span>
+                  <span className="block text-sm font-black text-white">Filters</span>
+                  <span className="block text-xs font-semibold text-white/52">
+                    Within {filters.distanceKm} km of your current location
+                  </span>
+                </span>
+                <ChevronDown
+                  className={`text-[#f4c430] transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
+                  size={20}
+                />
+              </button>
+              {filtersOpen ? (
+                <div className="grid gap-3 border-t border-white/10 p-4 sm:grid-cols-2">
+                  <label className="grid gap-2 text-sm font-black text-white">
+                    Distance
+                    <select
+                      className="h-12 rounded-2xl border border-white/10 bg-[#101014] px-3 font-semibold text-white outline-none"
+                      value={filters.distanceKm}
+                      onChange={(event) => updateFilter('distanceKm', Number(event.target.value))}
+                    >
+                      {[2, 5, 10, 25].map((distance) => (
+                        <option key={distance} value={distance}>
+                          Within {distance} km
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <FilterSelect
+                    label="Service"
+                    options={serviceTypeOptions}
+                    value={filters.serviceType}
+                    onChange={(value) => updateFilter('serviceType', value)}
+                  />
+                  <FilterSelect
+                    label="Specialty"
+                    options={specialtyOptions}
+                    value={filters.specialty}
+                    onChange={(value) => updateFilter('specialty', value)}
+                  />
+                  <FilterSelect
+                    label="Comfort"
+                    options={accessibilityOptions}
+                    value={filters.accessibility}
+                    onChange={(value) => updateFilter('accessibility', value)}
+                  />
+                </div>
+              ) : null}
+            </div>
+            {hasSearched ? (
+              <p className="mt-3 rounded-2xl bg-black/30 px-3 py-2 text-sm font-bold text-white/68">
+                {resultCount} local {resultCount === 1 ? 'match' : 'matches'} near your current location.
+              </p>
+            ) : null}
             {isListening ? (
               <p className="mt-3 rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
                 Listening demo: filling the sample search...
@@ -874,6 +991,49 @@ function HeroSearch({
             ) : null}
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function FilterSelect({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  options: string[];
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-black text-white">
+      {label}
+      <select
+        className="h-12 rounded-2xl border border-white/10 bg-[#101014] px-3 font-semibold text-white outline-none"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function NoLocalMatches() {
+  return (
+    <section className="mx-auto max-w-3xl px-4 pb-28 pt-5 sm:px-6 lg:px-8">
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-6 text-center">
+        <Search className="mx-auto text-[#f4c430]" size={32} />
+        <h2 className="mt-4 text-2xl font-black">No local matches yet</h2>
+        <p className="mt-2 leading-7 text-white/68">
+          Try expanding the distance filter or using fewer specifics in the search.
+        </p>
       </div>
     </section>
   );
@@ -1479,14 +1639,43 @@ function formatCurrency(cents: number) {
   }).format(cents / 100);
 }
 
-function rankProfessionals(query: string) {
+function rankProfessionals(query: string, filters: FilterState) {
   const tokens = query
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
 
-  return [...professionals].sort((a, b) => scoreProfile(b, tokens) - scoreProfile(a, tokens));
+  return filterLocalProfiles(professionals, filters).sort((a, b) => scoreProfile(b, tokens) - scoreProfile(a, tokens));
+}
+
+function filterLocalProfiles(profiles: Professional[], filters: FilterState) {
+  return profiles.filter((profile) => {
+    if (distanceToKm(profile.distance) > filters.distanceKm) return false;
+    if (!profileMatchesFilter(profile, filters.serviceType, 'service')) return false;
+    if (!profileMatchesFilter(profile, filters.specialty, 'specialty')) return false;
+    if (!profileMatchesFilter(profile, filters.accessibility, 'accessibility')) return false;
+    return true;
+  });
+}
+
+function distanceToKm(distance: string) {
+  const parsed = Number(distance.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
+function profileMatchesFilter(profile: Professional, option: string, kind: 'service' | 'specialty' | 'accessibility') {
+  if (option.startsWith('Any')) return true;
+  const normalized = option.toLowerCase();
+  const haystacks = {
+    service: [...profile.services.map((service) => service.name), ...profile.searchTerms],
+    specialty: [...profile.specialties, ...profile.services.map((service) => service.name), ...profile.searchTerms],
+    accessibility: [...profile.accommodations, ...profile.searchTerms],
+  };
+  return haystacks[kind].some((value) => {
+    const candidate = value.toLowerCase();
+    return candidate.includes(normalized) || normalized.includes(candidate);
+  });
 }
 
 function scoreProfile(profile: Professional, tokens: string[]) {
