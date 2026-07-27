@@ -68,6 +68,7 @@ type TipChoice = 15 | 18 | 20 | 25 | 'custom' | 'none';
 
 const taxRate = 0.13;
 const defaultTipChoice: TipChoice = 18;
+const clientSessionStorageKey = 'frizi-client-session';
 
 type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
 
@@ -77,6 +78,40 @@ type FilterState = {
   specialty: string;
   accessibility: string;
 };
+
+type ClientSession = {
+  name: string;
+  email: string;
+};
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  start: () => void;
+};
+
+type BrowserSpeechRecognitionEvent = {
+  results: {
+    [index: number]: {
+      [index: number]: {
+        transcript: string;
+      };
+    };
+  };
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  }
+}
 
 type InvitationFixture = {
   token: string;
@@ -616,6 +651,19 @@ function App() {
   const [selectedTime, setSelectedTime] = useState('');
   const [booking, setBooking] = useState<BookingRequest | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState('');
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [clientSession, setClientSession] = useState<ClientSession | null>(null);
+
+  useEffect(() => {
+    const savedSession = window.localStorage.getItem(clientSessionStorageKey);
+    if (!savedSession) return;
+    try {
+      setClientSession(JSON.parse(savedSession) as ClientSession);
+    } catch {
+      window.localStorage.removeItem(clientSessionStorageKey);
+    }
+  }, []);
 
   const hasSearched = submittedQuery.trim().length > 0;
   const rankedProfiles = useMemo(
@@ -658,14 +706,62 @@ function App() {
     setActiveClientNav(null);
   }
 
-  function demoMicSearch() {
-    setIsListening(true);
-    window.setTimeout(() => {
-      setQuery(sampleQuery);
-      setSubmittedQuery(sampleQuery);
-      setActiveIndex(0);
+  function runSearchFromVoice(transcript: string) {
+    const spokenQuery = transcript.trim();
+    if (!spokenQuery) return;
+    setQuery(spokenQuery);
+    setSubmittedQuery(spokenQuery);
+    setActiveIndex(0);
+    setSelectedService('');
+    setSelectedTime('');
+    setBooking(null);
+    setActiveClientNav(null);
+  }
+
+  function startVoiceSearch() {
+    const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    setVoiceMessage('');
+
+    if (!SpeechRecognition) {
+      setIsListening(true);
+      setVoiceMessage('Voice search is not available in this browser. Using a sample spoken search.');
+      window.setTimeout(() => {
+        runSearchFromVoice(sampleQuery);
+        setIsListening(false);
+      }, 650);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-CA';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript ?? '';
+      runSearchFromVoice(transcript);
+      setVoiceMessage(transcript ? `Searching for: ${transcript}` : 'No speech detected. Try again.');
+    };
+    recognition.onerror = () => {
       setIsListening(false);
-    }, 650);
+      setVoiceMessage('Voice search could not hear you. Tap the mic and try again.');
+    };
+    recognition.onend = () => setIsListening(false);
+
+    try {
+      setIsListening(true);
+      setVoiceMessage('Listening...');
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      setVoiceMessage('Voice search is already starting. Try again in a second.');
+    }
+  }
+
+  function handleClientAuth(session: ClientSession) {
+    setClientSession(session);
+    window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
+    setAuthModalOpen(false);
+    setActiveClientNav('profile');
   }
 
   function moveDeck(direction: 'previous' | 'next') {
@@ -710,8 +806,12 @@ function App() {
               <img className="h-10 w-10 rounded-xl border border-[#f4c430]/55 object-cover" src="/frizi-icon.png" alt="" />
               <span className="text-lg font-black text-[#f4c430]">Frizi</span>
             </button>
-            <button className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white" type="button">
-              Sign in/up
+            <button
+              className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
+              type="button"
+              onClick={() => (clientSession ? setActiveClientNav('profile') : setAuthModalOpen(true))}
+            >
+              {clientSession ? clientSession.name.split(' ')[0] : 'Sign in/up'}
             </button>
           </div>
         </header>
@@ -739,10 +839,11 @@ function App() {
           {!hasSearched ? (
             <HeroSearch
               isListening={isListening}
-              onMic={demoMicSearch}
+              onMic={startVoiceSearch}
               onSubmit={submitSearch}
               query={query}
               setQuery={setQuery}
+              voiceMessage={voiceMessage}
               filters={filters}
               setFilters={setFilters}
               hasSearched={hasSearched}
@@ -766,7 +867,7 @@ function App() {
               <ProfileDetails
                 booking={booking}
                 isListening={isListening}
-                onMic={demoMicSearch}
+                onMic={startVoiceSearch}
                 onBook={confirmBooking}
                 onSearch={submitSearch}
                 profile={activeProfile}
@@ -776,6 +877,7 @@ function App() {
                 setQuery={setQuery}
                 setSelectedService={setSelectedService}
                 setSelectedTime={setSelectedTime}
+                voiceMessage={voiceMessage}
               />
               }
             />
@@ -783,6 +885,7 @@ function App() {
           {hasSearched && !activeProfile ? <NoLocalMatches /> : null}
         </>
       )}
+      {authModalOpen ? <ClientAuthModal onClose={() => setAuthModalOpen(false)} onComplete={handleClientAuth} /> : null}
       <ClientFooter activeNav={activeClientNav} onChange={setActiveClientNav} />
     </main>
   );
@@ -1017,6 +1120,92 @@ function InviteLanding({
   );
 }
 
+function ClientAuthModal({
+  onClose,
+  onComplete,
+}: {
+  onClose: () => void;
+  onComplete: (session: ClientSession) => void;
+}) {
+  const [mode, setMode] = useState<'signup' | 'signin'>('signup');
+  const [name, setName] = useState('Ari M.');
+  const [email, setEmail] = useState('ari@example.com');
+  const [error, setError] = useState('');
+
+  function submitAuth() {
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    if (!trimmedName || !trimmedEmail.includes('@')) {
+      setError('Add your name and a valid email to continue.');
+      return;
+    }
+
+    onComplete({ name: trimmedName, email: trimmedEmail });
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/72 px-4 backdrop-blur-sm">
+      <section className="w-full max-w-md rounded-[32px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black text-[#f4c430]">{mode === 'signup' ? 'Create client account' : 'Welcome back'}</p>
+            <h2 className="mt-1 text-3xl font-black">{mode === 'signup' ? 'Join Frizi' : 'Sign in'}</h2>
+          </div>
+          <button className="rounded-full border border-white/10 px-3 py-2 text-sm font-black text-white/70" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 rounded-2xl border border-white/10 bg-black/30 p-1">
+          {(['signup', 'signin'] as const).map((item) => (
+            <button
+              key={item}
+              className={`rounded-xl px-3 py-3 text-sm font-black ${mode === item ? 'bg-[#f4c430] text-black' : 'text-white/70'}`}
+              type="button"
+              onClick={() => setMode(item)}
+            >
+              {item === 'signup' ? 'Sign up' : 'Sign in'}
+            </button>
+          ))}
+        </div>
+
+        <label className="mt-5 block text-sm font-black text-white" htmlFor="client-auth-name">
+          Name
+        </label>
+        <input
+          id="client-auth-name"
+          className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Your name"
+        />
+
+        <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-email">
+          Email
+        </label>
+        <input
+          id="client-auth-email"
+          className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="you@example.com"
+          type="email"
+        />
+
+        {error ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{error}</p> : null}
+
+        <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-4 font-black text-black" type="button" onClick={submitAuth}>
+          <User size={18} />
+          {mode === 'signup' ? 'Create account' : 'Sign in'}
+        </button>
+        <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
+          Demo account flow saves this client session in the browser and opens your Frizi profile.
+        </p>
+      </section>
+    </div>
+  );
+}
+
 function HeroSearch({
   filters,
   hasSearched,
@@ -1027,6 +1216,7 @@ function HeroSearch({
   resultCount,
   setFilters,
   setQuery,
+  voiceMessage,
 }: {
   filters: FilterState;
   hasSearched: boolean;
@@ -1037,6 +1227,7 @@ function HeroSearch({
   resultCount: number;
   setFilters: (value: FilterState) => void;
   setQuery: (value: string) => void;
+  voiceMessage: string;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -1151,9 +1342,9 @@ function HeroSearch({
                 {resultCount} local {resultCount === 1 ? 'match' : 'matches'} near your current location.
               </p>
             ) : null}
-            {isListening ? (
+            {isListening || voiceMessage ? (
               <p className="mt-3 rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
-                Listening demo: filling the sample search...
+                {voiceMessage || 'Listening...'}
               </p>
             ) : null}
           </div>
@@ -1361,6 +1552,7 @@ function ProfileDetails({
   setQuery,
   setSelectedService,
   setSelectedTime,
+  voiceMessage,
 }: {
   booking: BookingRequest | null;
   isListening: boolean;
@@ -1374,6 +1566,7 @@ function ProfileDetails({
   setQuery: (value: string) => void;
   setSelectedService: (value: string) => void;
   setSelectedTime: (value: string) => void;
+  voiceMessage: string;
 }) {
   const [showReviews, setShowReviews] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -1408,6 +1601,11 @@ function ProfileDetails({
             <Mic size={16} />
           </button>
         </div>
+        {isListening || voiceMessage ? (
+          <p className="mx-auto mt-2 max-w-5xl rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
+            {voiceMessage || 'Listening...'}
+          </p>
+        ) : null}
       </div>
 
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-5 sm:px-6">
