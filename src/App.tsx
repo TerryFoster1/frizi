@@ -179,6 +179,39 @@ const completedAppointmentHistory = [
   },
 ];
 
+const clientProfilePhoto =
+  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=700&q=80';
+
+const clientHairPhotos = [
+  {
+    id: 'hair_ari_after_001',
+    imageUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=80',
+    label: 'Last low fade',
+    note: 'Synced after a completed appointment with consent.',
+  },
+  {
+    id: 'hair_ari_after_002',
+    imageUrl: 'https://images.unsplash.com/photo-1622286346003-cbc8b8e30a58?auto=format&fit=crop&w=900&q=80',
+    label: 'Texture reference from last visit',
+    note: 'Professional-updated haircut history, visible to both sides.',
+  },
+];
+
+const clientExamplePhotos = [
+  {
+    id: 'example_ari_low_fade',
+    imageUrl: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=900&q=80',
+    label: 'Low fade goal',
+    note: 'Natural neckline, not squared off.',
+  },
+  {
+    id: 'example_ari_texture',
+    imageUrl: 'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=900&q=80',
+    label: 'Top texture',
+    note: 'Keep movement on top without shiny gel.',
+  },
+];
+
 const professionals: Professional[] = [
   {
     id: 'omar',
@@ -1698,18 +1731,101 @@ function ProductsPanel() {
 function ClientPassportPanel() {
   const passportUrl = 'https://frizi.ca/passport/client-demo-ari';
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=720x720&margin=18&data=${encodeURIComponent(passportUrl)}`;
+  const [exampleUploaded, setExampleUploaded] = useState(false);
+  const [profileUpdated, setProfileUpdated] = useState(false);
+  const demoExample = {
+    id: 'example_uploaded_demo',
+    imageUrl: 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=900&q=80',
+    label: 'Uploaded demo example',
+    note: 'Client-added inspiration photo shared with the pro before booking.',
+  };
+  const visibleExamples = exampleUploaded ? [...clientExamplePhotos, demoExample] : clientExamplePhotos;
 
   return (
-    <div className="mt-5 rounded-[28px] border border-white/10 bg-[#151519] p-5">
-      <QrCode className="text-[#f4c430]" size={30} />
-      <h2 className="mt-4 text-2xl font-black">Hair passport QR</h2>
-      <p className="mt-2 leading-7 text-white/68">
-        Share this with your hairdresser so they can see your haircut photos, preferences, product notes, and appointment history if they are not on Frizi yet.
-      </p>
-      <div className="mx-auto mt-5 max-w-xs rounded-3xl bg-white p-4">
-        <img className="aspect-square w-full" src={qrUrl} alt="Client hair passport QR code" />
+    <div className="mt-5 space-y-4">
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <div className="flex items-center gap-4">
+          <img className="h-20 w-20 rounded-3xl object-cover" src={clientProfilePhoto} alt="Client profile" />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-black">Profile photo</h2>
+            <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
+              This is your account image. It is separate from haircut history and example photos.
+            </p>
+          </div>
+        </div>
+        <button
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black"
+          type="button"
+          onClick={() => setProfileUpdated((value) => !value)}
+        >
+          <Camera size={18} />
+          {profileUpdated ? 'Profile photo updated' : 'Update profile photo'}
+        </button>
       </div>
-      <p className="mt-4 break-all rounded-2xl bg-black/30 p-3 text-sm font-semibold text-white/62">{passportUrl}</p>
+
+      <PhotoBoard
+        actionLabel={exampleUploaded ? 'Example photo uploaded' : 'Upload example photo'}
+        description="Upload inspiration photos for what you want. These are shared with the professional before the appointment, but they are not your profile picture or proof of a past cut."
+        onAction={() => setExampleUploaded((value) => !value)}
+        photos={visibleExamples}
+        title="Example photos"
+      />
+
+      <PhotoBoard
+        description="These are your actual haircut photos from completed appointments. When a professional updates your photo after a cut, it appears here and in their CRM with your consent."
+        photos={clientHairPhotos}
+        title="Your haircut photos"
+      />
+
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <QrCode className="text-[#f4c430]" size={30} />
+        <h2 className="mt-4 text-2xl font-black">Hair passport QR</h2>
+        <p className="mt-2 leading-7 text-white/68">
+          Share this with your hairdresser so they can see your haircut photos, preferences, example photos, product notes, and appointment history if they are not on Frizi yet.
+        </p>
+        <div className="mx-auto mt-5 max-w-xs rounded-3xl bg-white p-4">
+          <img className="aspect-square w-full" src={qrUrl} alt="Client hair passport QR code" />
+        </div>
+        <p className="mt-4 break-all rounded-2xl bg-black/30 p-3 text-sm font-semibold text-white/62">{passportUrl}</p>
+      </div>
+    </div>
+  );
+}
+
+function PhotoBoard({
+  actionLabel,
+  description,
+  onAction,
+  photos,
+  title,
+}: {
+  actionLabel?: string;
+  description: string;
+  onAction?: () => void;
+  photos: Array<{ id: string; imageUrl: string; label: string; note: string }>;
+  title: string;
+}) {
+  return (
+    <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+      <h2 className="text-2xl font-black">{title}</h2>
+      <p className="mt-2 leading-7 text-white/68">{description}</p>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        {photos.map((photo) => (
+          <article key={photo.id} className="overflow-hidden rounded-3xl bg-white/[0.06]">
+            <img className="aspect-[4/5] w-full object-cover" src={photo.imageUrl} alt="" />
+            <div className="p-3">
+              <p className="font-black">{photo.label}</p>
+              <p className="mt-1 text-sm font-semibold leading-5 text-white/58">{photo.note}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+      {actionLabel && onAction ? (
+        <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black" type="button" onClick={onAction}>
+          <Camera size={18} />
+          {actionLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
