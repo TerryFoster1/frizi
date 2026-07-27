@@ -1402,6 +1402,17 @@ function ProfileDetails({
           </button>
         </div>
 
+        <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
+          <button
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
+            type="button"
+            onClick={() => setBookingOpen((current) => !current)}
+          >
+            <CalendarDays size={20} />
+            Book an appointment
+          </button>
+        </div>
+
         <button
           className="inline-flex items-center gap-2 px-1 py-2 text-sm font-black text-[#f4c430]"
           type="button"
@@ -1410,17 +1421,6 @@ function ProfileDetails({
           Reviews {profile.rating}
           <Star size={16} fill="currentColor" />
         </button>
-
-        <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-          <button
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
-            type="button"
-            onClick={() => setBookingOpen((current) => !current)}
-          >
-            <CalendarDays size={20} />
-            Book with stylist
-          </button>
-        </div>
 
         {bookingOpen ? (
           <div className="space-y-4 rounded-[28px] border border-white/10 bg-[#151519] p-5">
@@ -1497,7 +1497,7 @@ function ProfileDetails({
               onClick={onBook}
             >
               <CalendarDays size={20} />
-              Book with stylist
+              Book an appointment
             </button>
             {booking ? <BookingConfirmation booking={booking} /> : null}
           </div>
