@@ -1298,9 +1298,7 @@ function DeckCard({
         </div>
         <div className="absolute bottom-0 right-0 z-10 max-w-[86%] p-5 text-right sm:max-w-xl sm:p-8">
           <h2 className="text-5xl font-black leading-none drop-shadow-2xl sm:text-7xl">{profile.name}</h2>
-          <p className="ml-auto mt-3 max-w-md text-base font-semibold leading-6 text-white/82 drop-shadow sm:text-lg">
-            {profile.whyMatch}
-          </p>
+          <p className="ml-auto mt-3 max-w-md text-xl font-black leading-6 text-white/90 drop-shadow sm:text-2xl">{profile.studio}</p>
           <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm font-black text-white">
             <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
               <Star className="text-[#f4c430]" size={16} fill="currentColor" />
