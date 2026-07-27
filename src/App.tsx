@@ -2,9 +2,11 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  Gift,
   Heart,
   MapPin,
   Mic,
+  QrCode,
   Search,
   Send,
   ShieldCheck,
@@ -12,7 +14,7 @@ import {
   Star,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type Service = {
   name: string;
@@ -57,8 +59,57 @@ type BookingRequest = {
   eventId: string;
 };
 
+type InvitationFixture = {
+  token: string;
+  professionalId: string;
+  openedEvent: string;
+  offer: {
+    id: string;
+    title: string;
+    type: string;
+    value: string;
+    expiresAt: string;
+    terms: string;
+    status: 'live' | 'paused' | 'expired';
+    redeemedClientKeys: string[];
+  };
+};
+
 const sampleQuery =
   'I am looking for a muslim friendly barber near me who is good at fades.';
+
+const invitationFixtures: InvitationFixture[] = [
+  {
+    token: 'mara-chen-frizi25',
+    professionalId: 'mara',
+    openedEvent: 'client_invite_opened:mara-chen-frizi25',
+    offer: {
+      id: 'offer_mara_intro_25',
+      title: 'Get 25% off your next appointment',
+      type: 'Percentage discount',
+      value: '25%',
+      expiresAt: '2026-08-15',
+      terms: 'One introductory redemption per invited client. Minimum service value $50 CAD. Not combinable with other discounts.',
+      status: 'live',
+      redeemedClientKeys: ['existing-redeemed-demo'],
+    },
+  },
+  {
+    token: 'mara-paused-demo',
+    professionalId: 'mara',
+    openedEvent: 'client_invite_opened:mara-paused-demo',
+    offer: {
+      id: 'offer_mara_paused',
+      title: 'Free curl routine card',
+      type: 'Complimentary add-on',
+      value: '$0 CAD add-on',
+      expiresAt: '2026-08-15',
+      terms: 'Paused by the professional.',
+      status: 'paused',
+      redeemedClientKeys: [],
+    },
+  },
+];
 
 const professionals: Professional[] = [
   {
@@ -228,6 +279,7 @@ const professionals: Professional[] = [
 ];
 
 function App() {
+  const inviteToken = window.location.pathname.match(/^\/invite\/([^/?#]+)/)?.[1];
   const [query, setQuery] = useState(sampleQuery);
   const [submittedQuery, setSubmittedQuery] = useState(sampleQuery);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -242,6 +294,22 @@ function App() {
   const activeProfile = rankedProfiles[activeIndex % rankedProfiles.length];
   const activeService = selectedService || activeProfile.services[0].name;
   const activeTime = selectedTime || activeProfile.bookingSlots[0];
+
+  if (inviteToken) {
+    const invitation = invitationFixtures.find((fixture) => fixture.token === inviteToken);
+    return (
+      <InviteLanding
+        invitation={invitation}
+        onViewProfile={(professionalId) => {
+          const profileIndex = professionals.findIndex((profile) => profile.id === professionalId);
+          setSubmittedQuery('Mara Chen Frizi invitation');
+          setQuery('Mara Chen Frizi invitation');
+          setActiveIndex(profileIndex >= 0 ? profileIndex : 0);
+          window.history.pushState({}, '', '/');
+        }}
+      />
+    );
+  }
 
   function submitSearch() {
     setSubmittedQuery(query.trim() || sampleQuery);
@@ -334,6 +402,190 @@ function App() {
             setSelectedTime={setSelectedTime}
           />
         </div>
+      </section>
+    </main>
+  );
+}
+
+function trackClientEvent(event: string, metadata: Record<string, string>) {
+  console.info('[frizi-client-analytics]', event, metadata);
+}
+
+function InviteLanding({
+  invitation,
+  onViewProfile,
+}: {
+  invitation?: InvitationFixture;
+  onViewProfile: (professionalId: string) => void;
+}) {
+  const [clientMode, setClientMode] = useState<'new' | 'existing'>('new');
+  const [claimed, setClaimed] = useState(false);
+  const [booking, setBooking] = useState<BookingRequest | null>(null);
+  const professional = invitation ? professionals.find((profile) => profile.id === invitation.professionalId) : undefined;
+  const clientKey = clientMode === 'existing' ? 'existing-client-demo' : 'new-client-demo';
+  const alreadyRedeemed = Boolean(invitation?.offer.redeemedClientKeys.includes(clientKey));
+  const offerIsClaimable = invitation?.offer.status === 'live' && !alreadyRedeemed;
+
+  useEffect(() => {
+    if (invitation && professional) {
+      trackClientEvent('client_invite_opened', {
+        invitation_token: invitation.token,
+        professional_slug: professional.id,
+        offer_id: invitation.offer.id,
+      });
+    }
+  }, [invitation, professional]);
+
+  if (!invitation || !professional) {
+    return (
+      <main className="min-h-screen bg-[#080808] px-4 py-6 text-white">
+        <section className="mx-auto flex min-h-[82vh] max-w-lg flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-center">
+          <QrCode className="mx-auto text-[#f4c430]" size={42} />
+          <h1 className="mt-5 text-3xl font-black">This invitation is not available.</h1>
+          <p className="mt-3 text-white/70">The link may be expired, disabled, or typed incorrectly. Ask your hair professional for a fresh Frizi invite.</p>
+          <a className="mt-6 rounded-2xl bg-[#f4c430] px-5 py-4 text-center font-black text-black" href="/">
+            Open Frizi
+          </a>
+        </section>
+      </main>
+    );
+  }
+
+  const activeInvitation = invitation;
+  const invitingProfessional = professional;
+
+  function claimOffer() {
+    if (!offerIsClaimable) return;
+    trackClientEvent('client_offer_claim_started', {
+      invitation_token: activeInvitation.token,
+      professional_slug: invitingProfessional.id,
+      client_mode: clientMode,
+    });
+    setClaimed(true);
+    trackClientEvent('client_offer_claimed', {
+      invitation_token: activeInvitation.token,
+      offer_id: activeInvitation.offer.id,
+      client_mode: clientMode,
+    });
+    trackClientEvent('client_connected_to_professional', {
+      invitation_token: activeInvitation.token,
+      professional_slug: invitingProfessional.id,
+    });
+  }
+
+  function bookFromInvite() {
+    const eventId = `client_booking_completed:${invitingProfessional.id}:${Date.now().toString().slice(-5)}`;
+    setBooking({
+      professional: invitingProfessional.name,
+      service: invitingProfessional.services[0].name,
+      time: invitingProfessional.bookingSlots[0],
+      eventId,
+    });
+    trackClientEvent('client_booking_started', {
+      invitation_token: activeInvitation.token,
+      professional_slug: invitingProfessional.id,
+    });
+    trackClientEvent('client_booking_completed', {
+      invitation_token: activeInvitation.token,
+      professional_slug: invitingProfessional.id,
+      offer_id: activeInvitation.offer.id,
+    });
+  }
+
+  return (
+    <main className="min-h-screen bg-[#080808] text-white">
+      <section className="mx-auto grid min-h-screen w-full max-w-6xl gap-5 px-4 py-5 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-8">
+        <aside className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
+          <img className="h-72 w-full object-cover sm:h-96 lg:h-[620px]" src={professional.detailImage} alt="" />
+        </aside>
+
+        <section className="rounded-3xl border border-white/10 bg-white/[0.05] p-5 shadow-2xl shadow-black/30 sm:p-7">
+          <div className="flex items-center gap-4">
+            <img className="h-20 w-20 rounded-full border-2 border-[#f4c430] object-cover" src={professional.heroImage} alt="" />
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#f4c430]">Personal invitation</p>
+              <h1 className="text-3xl font-black leading-tight">{professional.name}</h1>
+              <p className="text-white/68">{professional.role} at {professional.studio}</p>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-3xl bg-[#f4c430] p-5 text-black">
+            <div className="flex items-start gap-3">
+              <Gift className="mt-1 shrink-0" size={24} />
+              <div>
+                <p className="text-2xl font-black">{invitation.offer.status === 'live' ? invitation.offer.title : 'Offer currently paused'}</p>
+                <p className="mt-2 text-sm font-bold leading-6">
+                  {invitation.offer.status === 'live'
+                    ? `${invitation.offer.terms} Expires ${invitation.offer.expiresAt}.`
+                    : 'You can still view the professional profile and book, but this invite offer is not active right now.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            {['Book directly', 'Save your hair profile', 'Receive reminders and offers'].map((item) => (
+              <div key={item} className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                <CheckCircle2 className="text-[#f4c430]" size={20} />
+                <p className="mt-3 text-sm font-black">{item}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
+            <p className="font-black text-white">What is Frizi?</p>
+            <p className="mt-2 text-sm leading-6 text-white/70">
+              Frizi helps you book your professional, save the haircut photos and preferences that work, claim offers, and make future appointments easier.
+            </p>
+          </div>
+
+          <div className="mt-5 flex gap-2 rounded-2xl bg-black/30 p-1">
+            {(['new', 'existing'] as const).map((mode) => (
+              <button
+                key={mode}
+                className={`min-h-11 flex-1 rounded-xl px-3 text-sm font-black ${clientMode === mode ? 'bg-[#f4c430] text-black' : 'text-white/70'}`}
+                onClick={() => {
+                  setClientMode(mode);
+                  setClaimed(false);
+                  setBooking(null);
+                }}
+              >
+                {mode === 'new' ? 'New client' : 'Existing client'}
+              </button>
+            ))}
+          </div>
+
+          {alreadyRedeemed ? (
+            <p className="mt-3 rounded-2xl border border-[#f4c430]/40 bg-[#f4c430]/10 p-4 text-sm font-bold text-[#f4c430]">
+              Demo safeguard: this existing account already redeemed the introductory offer.
+            </p>
+          ) : null}
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <button
+              className="min-h-14 rounded-2xl bg-[#f4c430] px-5 font-black text-black disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!offerIsClaimable}
+              onClick={claimOffer}
+            >
+              {claimed ? 'Offer claimed' : 'Claim offer'}
+            </button>
+            <button className="min-h-14 rounded-2xl border border-white/15 px-5 font-black text-white" onClick={() => onViewProfile(professional.id)}>
+              View professional profile
+            </button>
+          </div>
+
+          {claimed ? (
+            <div className="mt-5 rounded-3xl border border-[#f4c430]/40 bg-[#f4c430]/10 p-4">
+              <p className="font-black text-[#f4c430]">Connected to {professional.name}</p>
+              <p className="mt-2 text-sm leading-6 text-white/72">Your offer is attached to this professional relationship. You can book now without searching again.</p>
+              <button className="mt-4 min-h-12 w-full rounded-2xl bg-white px-5 font-black text-black" onClick={bookFromInvite}>
+                Join and book {professional.bookingSlots[0]}
+              </button>
+            </div>
+          ) : null}
+
+          {booking ? <BookingConfirmation booking={booking} /> : null}
+        </section>
       </section>
     </main>
   );
