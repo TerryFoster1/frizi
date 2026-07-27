@@ -18,7 +18,7 @@ import {
   Star,
   User,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 type Service = {
   name: string;
@@ -1200,6 +1200,13 @@ function DeckCard({
   total: number;
 }) {
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const swipeGesture = useRef<{
+    isHorizontal: boolean;
+    lastX: number;
+    lastY: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
 
   function finishSwipe(clientX: number) {
     if (touchStartX === null) return;
@@ -1212,14 +1219,60 @@ function DeckCard({
     }
   }
 
+  function finishTouchSwipe() {
+    const gesture = swipeGesture.current;
+    swipeGesture.current = null;
+    if (!gesture) return;
+
+    const deltaX = gesture.lastX - gesture.startX;
+    const deltaY = gesture.lastY - gesture.startY;
+    if (Math.abs(deltaX) < 54 || Math.abs(deltaX) < Math.abs(deltaY) * 1.15) return;
+
+    if (deltaX < 0) {
+      onNext();
+    } else {
+      onPrevious();
+    }
+  }
+
   return (
     <section
-      className="relative h-[100svh] overflow-hidden bg-black"
-      onPointerDown={(event) => setTouchStartX(event.clientX)}
+      className="relative h-[100svh] overflow-hidden bg-black [touch-action:pan-y]"
+      onPointerDown={(event) => {
+        if (event.pointerType === 'touch') return;
+        setTouchStartX(event.clientX);
+      }}
       onPointerUp={(event) => {
+        if (event.pointerType === 'touch') return;
         finishSwipe(event.clientX);
         setTouchStartX(null);
       }}
+      onTouchStart={(event) => {
+        const touch = event.touches[0];
+        swipeGesture.current = {
+          isHorizontal: false,
+          lastX: touch.clientX,
+          lastY: touch.clientY,
+          startX: touch.clientX,
+          startY: touch.clientY,
+        };
+      }}
+      onTouchMove={(event) => {
+        const gesture = swipeGesture.current;
+        const touch = event.touches[0];
+        if (!gesture || !touch) return;
+
+        gesture.lastX = touch.clientX;
+        gesture.lastY = touch.clientY;
+        const deltaX = gesture.lastX - gesture.startX;
+        const deltaY = gesture.lastY - gesture.startY;
+
+        if (Math.abs(deltaX) > 14 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+          gesture.isHorizontal = true;
+          event.preventDefault();
+        }
+      }}
+      onTouchEnd={finishTouchSwipe}
     >
       <div className="relative h-full">
         <img
@@ -1228,8 +1281,6 @@ function DeckCard({
           src={profile.heroImage}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/8 to-black/82" />
-        <button className="absolute left-0 top-0 h-full w-1/3" type="button" aria-label="Previous professional" onClick={onPrevious} />
-        <button className="absolute right-0 top-0 h-full w-1/3" type="button" aria-label="Next professional" onClick={onNext} />
         <div className="absolute right-4 top-4 z-10 flex items-center gap-3 pt-safe">
           <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-black text-white/72 backdrop-blur">
             {activeIndex + 1}/{total}
