@@ -2,17 +2,19 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Gift,
-  Heart,
   MapPin,
   Mic,
   QrCode,
   Search,
   Send,
+  ShoppingBag,
   ShieldCheck,
   Sparkles,
   Star,
-  X,
+  User,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -58,6 +60,8 @@ type BookingRequest = {
   time: string;
   eventId: string;
 };
+
+type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
 
 type InvitationFixture = {
   token: string;
@@ -393,8 +397,8 @@ function App() {
   const [query, setQuery] = useState(sampleQuery);
   const [submittedQuery, setSubmittedQuery] = useState(sampleQuery);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [likedIds, setLikedIds] = useState<string[]>([]);
-  const [passedIds, setPassedIds] = useState<string[]>([]);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [activeClientNav, setActiveClientNav] = useState<ClientNavKey | null>(null);
   const [selectedService, setSelectedService] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [booking, setBooking] = useState<BookingRequest | null>(null);
@@ -432,6 +436,7 @@ function App() {
     setSelectedService('');
     setSelectedTime('');
     setBooking(null);
+    setActiveClientNav(null);
   }
 
   function demoMicSearch() {
@@ -444,21 +449,22 @@ function App() {
     }, 650);
   }
 
-  function moveDeck(direction: 'pass' | 'like') {
-    if (direction === 'like') {
-      setLikedIds((current) =>
-        current.includes(activeProfile.id) ? current : [...current, activeProfile.id],
-      );
-    } else {
-      setPassedIds((current) =>
-        current.includes(activeProfile.id) ? current : [...current, activeProfile.id],
-      );
-    }
+  function moveDeck(direction: 'previous' | 'next') {
     setSelectedService('');
     setSelectedTime('');
     setBooking(null);
-    setActiveIndex((current) => (current + 1) % rankedProfiles.length);
+    setActiveIndex((current) =>
+      direction === 'next'
+        ? (current + 1) % rankedProfiles.length
+        : (current - 1 + rankedProfiles.length) % rankedProfiles.length,
+    );
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function toggleSaved(profileId: string) {
+    setSavedIds((current) =>
+      current.includes(profileId) ? current.filter((id) => id !== profileId) : [...current, profileId],
+    );
   }
 
   function confirmBooking() {
@@ -472,55 +478,68 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080808] text-white">
-      <section className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-10 pt-4 sm:px-6 lg:px-8">
-        <header className="sticky top-0 z-40 -mx-4 border-b border-white/10 bg-[#080808]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
-            <div>
-              <div className="mb-2 flex items-center gap-2">
-                <img className="h-9 w-9 rounded-xl border border-[#f4c430]/55 object-cover" src="/frizi-icon.png" alt="" />
-                <p className="text-sm font-black text-[#f4c430]">Frizi</p>
-              </div>
-              <h1 className="text-2xl font-black leading-none sm:text-3xl">Find your person</h1>
-            </div>
-            <div className="rounded-full border border-[#f4c430]/50 px-3 py-1 text-sm font-black text-[#f4c430]">
-              Client app
-            </div>
-          </div>
-        </header>
-
-        <div className="grid flex-1 gap-6 py-5 lg:grid-cols-[420px_1fr] lg:items-start">
-          <aside className="lg:sticky lg:top-24">
-            <SearchPanel
-              isListening={isListening}
-              likedCount={likedIds.length}
-              onMic={demoMicSearch}
-              onSubmit={submitSearch}
-              passedCount={passedIds.length}
-              query={query}
-              resultCount={rankedProfiles.length}
-              setQuery={setQuery}
-            />
-            <DeckCard
-              activeIndex={activeIndex}
-              onLike={() => moveDeck('like')}
-              onPass={() => moveDeck('pass')}
-              profile={activeProfile}
-              total={rankedProfiles.length}
-            />
-          </aside>
-
-          <ProfileDetails
-            booking={booking}
-            onBook={confirmBooking}
-            profile={activeProfile}
-            selectedService={activeService}
-            selectedTime={activeTime}
-            setSelectedService={setSelectedService}
-            setSelectedTime={setSelectedTime}
-          />
+    <main className="min-h-screen bg-[#080808] pb-24 text-white">
+      <header className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-[#080808]/88 px-4 py-3 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+          <button className="flex items-center gap-2" type="button" onClick={() => setActiveClientNav(null)}>
+            <img className="h-10 w-10 rounded-xl border border-[#f4c430]/55 object-cover" src="/frizi-icon.png" alt="" />
+            <span className="text-lg font-black text-[#f4c430]">Frizi</span>
+          </button>
+          <button className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white" type="button">
+            Sign in/up
+          </button>
         </div>
-      </section>
+      </header>
+
+      {activeClientNav ? (
+        <ClientNavScreen
+          activeNav={activeClientNav}
+          booking={booking}
+          onBookSaved={(profileId) => {
+            const index = rankedProfiles.findIndex((profile) => profile.id === profileId);
+            if (index >= 0) {
+              setActiveIndex(index);
+              setActiveClientNav(null);
+              window.setTimeout(() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' }), 50);
+            }
+          }}
+          savedProfiles={rankedProfiles.filter((profile) => savedIds.includes(profile.id))}
+        />
+      ) : (
+        <>
+          <HeroSearch
+            isListening={isListening}
+            onMic={demoMicSearch}
+            onSubmit={submitSearch}
+            query={query}
+            setQuery={setQuery}
+          />
+          <section className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,480px)_1fr] lg:items-start lg:px-8">
+            <aside className="lg:sticky lg:top-24">
+              <DeckCard
+                activeIndex={activeIndex}
+                isSaved={savedIds.includes(activeProfile.id)}
+                onNext={() => moveDeck('next')}
+                onPrevious={() => moveDeck('previous')}
+                onToggleSaved={() => toggleSaved(activeProfile.id)}
+                profile={activeProfile}
+                total={rankedProfiles.length}
+              />
+            </aside>
+
+            <ProfileDetails
+              booking={booking}
+              onBook={confirmBooking}
+              profile={activeProfile}
+              selectedService={activeService}
+              selectedTime={activeTime}
+              setSelectedService={setSelectedService}
+              setSelectedTime={setSelectedTime}
+            />
+          </section>
+        </>
+      )}
+      <ClientFooter activeNav={activeClientNav} onChange={setActiveClientNav} />
     </main>
   );
 }
@@ -753,110 +772,99 @@ function InviteLanding({
   );
 }
 
-function SearchPanel({
+function HeroSearch({
   isListening,
-  likedCount,
   onMic,
   onSubmit,
-  passedCount,
   query,
-  resultCount,
   setQuery,
 }: {
   isListening: boolean;
-  likedCount: number;
   onMic: () => void;
   onSubmit: () => void;
-  passedCount: number;
   query: string;
-  resultCount: number;
   setQuery: (value: string) => void;
 }) {
   return (
-    <section className="mb-4 rounded-[28px] border border-white/10 bg-[#151519] p-3 shadow-2xl shadow-black/40">
-      <label className="sr-only" htmlFor="hairline-search">
-        Search for a hair professional
-      </label>
-      <div className="flex items-center gap-2 rounded-[22px] border border-white/10 bg-black/45 px-3 py-2">
-        <Search className="shrink-0 text-[#f4c430]" size={20} />
-        <input
-          id="hairline-search"
-          className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/38"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              onSubmit();
-            }
-          }}
-          placeholder="Tell Frizi exactly what you need"
-        />
-        <button
-          aria-label="Demo voice search"
-          className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${
-            isListening ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
-          }`}
-          type="button"
-          onClick={onMic}
-        >
-          <Mic size={18} />
-        </button>
+    <section className="relative min-h-[76svh] overflow-hidden pt-20">
+      <img
+        className="absolute inset-0 h-full w-full object-cover"
+        src="https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1800&q=85"
+        alt=""
+      />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/44 to-[#080808]" />
+      <div className="relative mx-auto flex min-h-[76svh] max-w-6xl flex-col justify-end px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="max-w-3xl">
+          <h1 className="text-5xl font-black leading-[0.95] tracking-normal sm:text-7xl">
+            Book your professional. Save what works.
+          </h1>
+          <p className="mt-5 max-w-2xl text-lg font-semibold leading-8 text-white/76">
+            Search for the right stylist, barber, or colour professional, then keep your haircut photos, preferences, and appointment history together.
+          </p>
+          <div className="mt-7 rounded-[28px] border border-white/12 bg-black/58 p-3 shadow-2xl shadow-black/50 backdrop-blur">
+            <label className="sr-only" htmlFor="frizi-search">
+              Search for a hair professional
+            </label>
+            <div className="flex items-center gap-2 rounded-[22px] border border-white/10 bg-white/8 px-3 py-2">
+              <Search className="shrink-0 text-[#f4c430]" size={20} />
+              <input
+                id="frizi-search"
+                className="min-w-0 flex-1 bg-transparent text-base font-semibold text-white outline-none placeholder:text-white/45"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    onSubmit();
+                  }
+                }}
+                placeholder="find me a stylist who..."
+              />
+              <button
+                aria-label="Demo voice search"
+                className={`grid h-11 w-11 shrink-0 place-items-center rounded-full ${
+                  isListening ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
+                }`}
+                type="button"
+                onClick={onMic}
+              >
+                <Mic size={18} />
+              </button>
+            </div>
+            <button className="mt-3 min-h-12 w-full rounded-2xl bg-[#f4c430] px-5 font-black text-black" type="button" onClick={onSubmit}>
+              Search
+            </button>
+            {isListening ? (
+              <p className="mt-3 rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
+                Listening demo: filling the sample search...
+              </p>
+            ) : null}
+          </div>
+        </div>
       </div>
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          className="flex-1 rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black"
-          type="button"
-          onClick={onSubmit}
-        >
-          Search
-        </button>
-        <button
-          className="rounded-2xl border border-white/10 px-4 py-3 text-sm font-black text-white"
-          type="button"
-          onClick={() => setQuery(sampleQuery)}
-        >
-          Use demo
-        </button>
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-bold text-white/58">
-        <Metric label="Matches" value={String(resultCount)} />
-        <Metric label="Liked" value={String(likedCount)} />
-        <Metric label="Passed" value={String(passedCount)} />
-      </div>
-      {isListening ? (
-        <p className="mt-3 rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
-          Listening demo: filling the sample search...
-        </p>
-      ) : null}
     </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl bg-white/[0.06] px-2 py-3">
-      <p className="text-lg font-black text-white">{value}</p>
-      <p>{label}</p>
-    </div>
   );
 }
 
 function DeckCard({
   activeIndex,
-  onLike,
-  onPass,
+  isSaved,
+  onNext,
+  onPrevious,
+  onToggleSaved,
   profile,
   total,
 }: {
   activeIndex: number;
-  onLike: () => void;
-  onPass: () => void;
+  isSaved: boolean;
+  onNext: () => void;
+  onPrevious: () => void;
+  onToggleSaved: () => void;
   profile: Professional;
   total: number;
 }) {
   return (
     <section className="overflow-hidden rounded-[34px] border border-white/10 bg-[#151519] shadow-2xl shadow-black/50">
-      <div className="relative min-h-[68svh] lg:min-h-[650px]">
+      <div className="relative min-h-[78svh] lg:min-h-[650px]">
         <img
           alt={`${profile.name} haircut example`}
           className="absolute inset-0 h-full w-full object-cover"
@@ -867,9 +875,16 @@ function DeckCard({
           <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-black uppercase tracking-[0.14em] text-[#f4c430] backdrop-blur">
             {activeIndex + 1} of {total}
           </span>
-          <span className="rounded-full bg-[#f4c430] px-3 py-1 text-sm font-black text-black">
-            {matchPercent(profile)}% match
-          </span>
+          <button
+            aria-label={isSaved ? `Remove ${profile.name} from saved` : `Save ${profile.name}`}
+            className={`grid h-12 w-12 place-items-center rounded-full border backdrop-blur ${
+              isSaved ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/20 bg-black/35 text-white'
+            }`}
+            type="button"
+            onClick={onToggleSaved}
+          >
+            <Star size={22} fill={isSaved ? 'currentColor' : 'none'} />
+          </button>
         </div>
         <div className="absolute bottom-0 left-0 right-0 p-5">
           <div className="mb-4 flex flex-wrap gap-2">
@@ -885,14 +900,15 @@ function DeckCard({
             <MapPin size={16} />
             {profile.neighborhood} - {profile.distance}
           </p>
-          <div className="mt-5 grid grid-cols-[64px_1fr_64px] items-center gap-3">
+          <p className="mt-2 text-sm font-black text-[#f4c430]">{matchPercent(profile)}% match</p>
+          <div className="mt-5 grid grid-cols-[58px_1fr_58px] items-center gap-3">
             <button
-              aria-label="Pass on this professional"
-              className="grid h-16 w-16 place-items-center rounded-full border border-white/12 bg-white/10 text-white"
+              aria-label="Previous professional"
+              className="grid h-14 w-14 place-items-center rounded-full border border-white/12 bg-white/10 text-white"
               type="button"
-              onClick={onPass}
+              onClick={onPrevious}
             >
-              <X size={30} />
+              <ChevronLeft size={30} />
             </button>
             <a
               className="rounded-full bg-[#f4c430] px-5 py-4 text-center text-base font-black text-black"
@@ -901,17 +917,17 @@ function DeckCard({
               See details and book
             </a>
             <button
-              aria-label="Like this professional"
-              className="grid h-16 w-16 place-items-center rounded-full bg-white text-black"
+              aria-label="Next professional"
+              className="grid h-14 w-14 place-items-center rounded-full bg-white text-black"
               type="button"
-              onClick={onLike}
+              onClick={onNext}
             >
-              <Heart size={30} />
+              <ChevronRight size={30} />
             </button>
           </div>
           <p className="mt-4 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-white/45">
             <ChevronDown size={16} />
-            Swipe with buttons, then scroll
+            Swipe left or right, then scroll for details
           </p>
         </div>
       </div>
@@ -1048,6 +1064,166 @@ function ProfileDetails({
         </div>
       </Panel>
     </section>
+  );
+}
+
+function ClientFooter({
+  activeNav,
+  onChange,
+}: {
+  activeNav: ClientNavKey | null;
+  onChange: (nav: ClientNavKey) => void;
+}) {
+  const items: Array<{ key: ClientNavKey; label: string; icon: typeof CalendarDays }> = [
+    { key: 'appointments', label: 'Appointments', icon: CalendarDays },
+    { key: 'saved', label: 'Saved', icon: Star },
+    { key: 'products', label: 'Products', icon: ShoppingBag },
+    { key: 'profile', label: 'Profile', icon: User },
+  ];
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-[#101014]/95 px-3 pb-3 pt-2 backdrop-blur-xl">
+      <div className="mx-auto grid max-w-xl grid-cols-4 gap-2">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const selected = activeNav === item.key;
+          return (
+            <button
+              key={item.key}
+              className={`grid min-h-14 place-items-center rounded-2xl text-[11px] font-black ${
+                selected ? 'bg-[#f4c430] text-black' : 'text-white'
+              }`}
+              type="button"
+              onClick={() => onChange(item.key)}
+            >
+              <Icon size={20} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function ClientNavScreen({
+  activeNav,
+  booking,
+  onBookSaved,
+  savedProfiles,
+}: {
+  activeNav: ClientNavKey;
+  booking: BookingRequest | null;
+  onBookSaved: (profileId: string) => void;
+  savedProfiles: Professional[];
+}) {
+  const titleMap: Record<ClientNavKey, string> = {
+    appointments: 'Appointments',
+    saved: 'Saved professionals',
+    products: 'Products',
+    profile: 'My hair profile',
+  };
+
+  return (
+    <section className="mx-auto min-h-screen max-w-4xl px-4 pb-28 pt-24 sm:px-6 lg:px-8">
+      <h1 className="text-4xl font-black">{titleMap[activeNav]}</h1>
+      {activeNav === 'appointments' ? <AppointmentsPanel booking={booking} /> : null}
+      {activeNav === 'saved' ? <SavedPanel profiles={savedProfiles} onBookSaved={onBookSaved} /> : null}
+      {activeNav === 'products' ? <ProductsPanel /> : null}
+      {activeNav === 'profile' ? <ClientPassportPanel /> : null}
+    </section>
+  );
+}
+
+function AppointmentsPanel({ booking }: { booking: BookingRequest | null }) {
+  return (
+    <div className="mt-5 rounded-[28px] border border-white/10 bg-[#151519] p-5">
+      {booking ? (
+        <BookingConfirmation booking={booking} />
+      ) : (
+        <>
+          <CalendarDays className="text-[#f4c430]" size={30} />
+          <h2 className="mt-4 text-2xl font-black">No appointment booked yet</h2>
+          <p className="mt-2 leading-7 text-white/68">Search without signing up, choose a professional, and your booked appointment will appear here.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SavedPanel({
+  profiles,
+  onBookSaved,
+}: {
+  profiles: Professional[];
+  onBookSaved: (profileId: string) => void;
+}) {
+  return (
+    <div className="mt-5 grid gap-3">
+      {profiles.length === 0 ? (
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <Star className="text-[#f4c430]" size={30} />
+          <h2 className="mt-4 text-2xl font-black">No saved professionals yet</h2>
+          <p className="mt-2 leading-7 text-white/68">Tap the star on a profile hero to keep a stylist or barber here.</p>
+        </div>
+      ) : (
+        profiles.map((profile) => (
+          <button
+            key={profile.id}
+            className="flex items-center gap-4 rounded-[24px] border border-white/10 bg-[#151519] p-3 text-left"
+            type="button"
+            onClick={() => onBookSaved(profile.id)}
+          >
+            <img className="h-20 w-20 rounded-2xl object-cover" src={profile.heroImage} alt="" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-xl font-black">{profile.name}</span>
+              <span className="block text-sm font-semibold text-white/60">{profile.role}</span>
+              <span className="mt-1 block text-sm font-black text-[#f4c430]">Book with stylist</span>
+            </span>
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
+function ProductsPanel() {
+  const products = [
+    { name: 'Curl Routine Starter Kit', detail: 'Saved after Mara recommended it for dry ends.', price: '$68' },
+    { name: 'Texture Spray', detail: 'Good for movement, shape, and second-day hair.', price: '$24' },
+    { name: 'Dry Shampoo', detail: 'For stretching blowouts and keeping volume.', price: '$30' },
+  ];
+
+  return (
+    <div className="mt-5 grid gap-3">
+      {products.map((product) => (
+        <div key={product.name} className="rounded-[24px] border border-white/10 bg-[#151519] p-5">
+          <ShoppingBag className="text-[#f4c430]" size={24} />
+          <h2 className="mt-3 text-xl font-black">{product.name}</h2>
+          <p className="mt-2 leading-7 text-white/68">{product.detail}</p>
+          <p className="mt-3 text-lg font-black text-[#f4c430]">{product.price}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClientPassportPanel() {
+  const passportUrl = 'https://frizi.ca/passport/client-demo-ari';
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=720x720&margin=18&data=${encodeURIComponent(passportUrl)}`;
+
+  return (
+    <div className="mt-5 rounded-[28px] border border-white/10 bg-[#151519] p-5">
+      <QrCode className="text-[#f4c430]" size={30} />
+      <h2 className="mt-4 text-2xl font-black">Hair passport QR</h2>
+      <p className="mt-2 leading-7 text-white/68">
+        Share this with your hairdresser so they can see your haircut photos, preferences, product notes, and appointment history if they are not on Frizi yet.
+      </p>
+      <div className="mx-auto mt-5 max-w-xs rounded-3xl bg-white p-4">
+        <img className="aspect-square w-full" src={qrUrl} alt="Client hair passport QR code" />
+      </div>
+      <p className="mt-4 break-all rounded-2xl bg-black/30 p-3 text-sm font-semibold text-white/62">{passportUrl}</p>
+    </div>
   );
 }
 
