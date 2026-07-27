@@ -6,6 +6,10 @@ type CheckoutKind = 'pro_subscription' | 'service_booking' | 'product_purchase';
 type CheckoutRequest = {
   kind?: CheckoutKind;
   amountCents?: number;
+  serviceAmountCents?: number;
+  taxCents?: number;
+  tipCents?: number;
+  tipSelection?: '15' | '18' | '20' | '25' | 'custom' | 'none';
   currency?: string;
   connectedAccountId?: string;
   customerEmail?: string;
@@ -60,7 +64,10 @@ export default async function handler(request: IncomingMessage & { body?: unknow
 
   const payload = await readJson(request);
   const kind = payload.kind || 'service_booking';
-  const amountCents = Math.max(100, Math.round(payload.amountCents || 11500));
+  const serviceAmountCents = Math.max(100, Math.round(payload.serviceAmountCents ?? payload.amountCents ?? 11500));
+  const taxCents = Math.max(0, Math.round(payload.taxCents || 0));
+  const tipCents = Math.max(0, Math.round(payload.tipCents || 0));
+  const amountCents = Math.max(100, Math.round(payload.amountCents || serviceAmountCents + taxCents + tipCents));
   const currency = (payload.currency || 'cad').toLowerCase();
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
     apiVersion: '2026-06-24.dahlia',
@@ -70,15 +77,22 @@ export default async function handler(request: IncomingMessage & { body?: unknow
   const metadata = {
     frizi_checkout_kind: kind,
     professional_name: payload.professionalName || 'Mara Chen',
+    service_amount_cents: String(serviceAmountCents),
+    tax_cents: String(taxCents),
+    tip_cents: String(tipCents),
+    tip_selection: payload.tipSelection || (tipCents > 0 ? 'custom' : 'none'),
+    revenue_excluding_tips_cents: String(serviceAmountCents + taxCents),
+    revenue_including_tips_cents: String(amountCents),
     platform_fee_rate: platformFeeRate.toString(),
     instant_payout_fee_rate: instantPayoutFeeRate.toString(),
     stylist_commission_cents: String(payload.stylistCommissionCents || 0),
   };
 
-  const lineItem =
+  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
     kind === 'pro_subscription' && process.env.FRIZI_PRO_MONTHLY_PRICE_ID
-      ? { price: process.env.FRIZI_PRO_MONTHLY_PRICE_ID, quantity: 1 }
-      : {
+      ? [{ price: process.env.FRIZI_PRO_MONTHLY_PRICE_ID, quantity: 1 }]
+      : [
+        {
           price_data: {
             currency,
             product_data: {
@@ -87,15 +101,40 @@ export default async function handler(request: IncomingMessage & { body?: unknow
                 (kind === 'product_purchase' ? 'Frizi professional product order' : 'Frizi appointment payment'),
             },
             recurring: kind === 'pro_subscription' ? { interval: 'month' as const } : undefined,
-            unit_amount: kind === 'pro_subscription' ? 2900 : amountCents,
+            unit_amount: kind === 'pro_subscription' ? 2900 : serviceAmountCents,
           },
           quantity: 1,
-        };
+        },
+        ...(taxCents > 0
+          ? [
+              {
+                price_data: {
+                  currency,
+                  product_data: { name: 'Taxes' },
+                  unit_amount: taxCents,
+                },
+                quantity: 1,
+              },
+            ]
+          : []),
+        ...(tipCents > 0
+          ? [
+              {
+                price_data: {
+                  currency,
+                  product_data: { name: `Optional tip for ${payload.professionalName || 'your professional'}` },
+                  unit_amount: tipCents,
+                },
+                quantity: 1,
+              },
+            ]
+          : []),
+      ];
 
   const sessionParams: Stripe.Checkout.SessionCreateParams = {
     mode: kind === 'pro_subscription' ? 'subscription' : 'payment',
     customer_email: payload.customerEmail,
-    line_items: [lineItem],
+    line_items: lineItems,
     success_url: `${baseUrl}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/?checkout=cancelled`,
     metadata,

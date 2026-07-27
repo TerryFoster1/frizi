@@ -54,6 +54,11 @@ export default async function handler(request: IncomingMessage, response: Server
         id: session.id,
         kind: session.metadata?.frizi_checkout_kind,
         professional: session.metadata?.professional_name,
+        serviceAmountCents: session.metadata?.service_amount_cents,
+        taxCents: session.metadata?.tax_cents,
+        tipCents: session.metadata?.tip_cents,
+        revenueExcludingTipsCents: session.metadata?.revenue_excluding_tips_cents,
+        revenueIncludingTipsCents: session.metadata?.revenue_including_tips_cents,
       });
       break;
     }

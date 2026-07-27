@@ -1,13 +1,16 @@
 import {
   CalendarDays,
+  Camera,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   Gift,
   MapPin,
   Mic,
   QrCode,
+  ReceiptText,
   Search,
   Send,
   ShoppingBag,
@@ -57,9 +60,15 @@ type Professional = {
 type BookingRequest = {
   professional: string;
   service: string;
+  servicePriceCents: number;
   time: string;
   eventId: string;
 };
+
+type TipChoice = 15 | 18 | 20 | 25 | 'custom' | 'none';
+
+const taxRate = 0.13;
+const defaultTipChoice: TipChoice = 18;
 
 type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
 
@@ -120,6 +129,29 @@ const invitationFixtures: InvitationFixture[] = [
       status: 'paused',
       redeemedClientKeys: [],
     },
+  },
+];
+
+const completedAppointmentHistory = [
+  {
+    id: 'hist_mara_001',
+    professional: 'Mara Chen',
+    service: 'Dry curl cut',
+    date: 'Jul 14, 2026',
+    servicePriceCents: 11500,
+    tipCents: 2300,
+    reviewStatus: 'Review left',
+    photosAttached: 2,
+  },
+  {
+    id: 'hist_omar_001',
+    professional: 'Omar Rahman',
+    service: 'Fade and lineup',
+    date: 'Jun 28, 2026',
+    servicePriceCents: 5200,
+    tipCents: 936,
+    reviewStatus: 'Review pending',
+    photosAttached: 1,
   },
 ];
 
@@ -472,6 +504,7 @@ function App() {
     setBooking({
       professional: activeProfile.name,
       service: activeService,
+      servicePriceCents: parseMoneyToCents(activeProfile.services.find((service) => service.name === activeService)?.price || '$0'),
       time: activeTime,
       eventId,
     });
@@ -659,6 +692,7 @@ function InviteLanding({
     setBooking({
       professional: invitingProfessional.name,
       service: invitingProfessional.services[0].name,
+      servicePriceCents: parseMoneyToCents(invitingProfessional.services[0].price),
       time: invitingProfessional.bookingSlots[0],
       eventId,
     });
@@ -1137,16 +1171,44 @@ function ClientNavScreen({
 
 function AppointmentsPanel({ booking }: { booking: BookingRequest | null }) {
   return (
-    <div className="mt-5 rounded-[28px] border border-white/10 bg-[#151519] p-5">
+    <div className="mt-5 space-y-4">
       {booking ? (
-        <BookingConfirmation booking={booking} />
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <BookingConfirmation booking={booking} />
+        </div>
       ) : (
-        <>
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
           <CalendarDays className="text-[#f4c430]" size={30} />
           <h2 className="mt-4 text-2xl font-black">No appointment booked yet</h2>
           <p className="mt-2 leading-7 text-white/68">Search without signing up, choose a professional, and your booked appointment will appear here.</p>
-        </>
+        </div>
       )}
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Completed appointments</h2>
+        <div className="mt-4 space-y-3">
+          {completedAppointmentHistory.map((appointment) => {
+            const taxes = Math.round(appointment.servicePriceCents * taxRate);
+            const total = appointment.servicePriceCents + taxes + appointment.tipCents;
+            return (
+              <article key={appointment.id} className="rounded-2xl bg-white/[0.05] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-black text-white">{appointment.service}</p>
+                    <p className="mt-1 text-sm font-semibold text-white/58">{appointment.professional} - {appointment.date}</p>
+                  </div>
+                  <p className="text-lg font-black text-[#f4c430]">{formatCurrency(total)}</p>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                  <InfoTile label="Price" value={formatCurrency(appointment.servicePriceCents)} />
+                  <InfoTile label="Tip" value={formatCurrency(appointment.tipCents)} />
+                  <InfoTile label="Review" value={appointment.reviewStatus} />
+                  <InfoTile label="Photos" value={`${appointment.photosAttached} attached`} />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1249,8 +1311,61 @@ function Panel({ children, title }: { children: React.ReactNode; title: string }
 }
 
 function BookingConfirmation({ booking }: { booking: BookingRequest }) {
+  const [tipChoice, setTipChoice] = useState<TipChoice>(defaultTipChoice);
+  const [customTip, setCustomTip] = useState('');
+  const [paymentComplete, setPaymentComplete] = useState(false);
+  const serviceTotal = booking.servicePriceCents;
+  const taxes = Math.round(serviceTotal * taxRate);
+  const tipAmount =
+    tipChoice === 'none'
+      ? 0
+      : tipChoice === 'custom'
+        ? Math.max(0, parseMoneyToCents(customTip))
+        : Math.round(serviceTotal * (tipChoice / 100));
+  const finalTotal = serviceTotal + taxes + tipAmount;
+  const receiptId = `frizi_rcpt_${booking.eventId.split(':').pop()}`;
+
+  if (paymentComplete) {
+    return (
+      <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4">
+        <p className="flex items-center gap-2 text-xl font-black text-emerald-300">
+          <CheckCircle2 size={22} />
+          Payment Successful
+        </p>
+        <p className="mt-2 text-sm leading-6 text-white/74">
+          Thanks for booking with {booking.professional}. Your receipt is saved to payment history and the pro-side booking record.
+        </p>
+        <div className="mt-4 rounded-2xl bg-black/28 p-4">
+          <p className="mb-3 flex items-center gap-2 font-black text-white">
+            <ReceiptText size={18} className="text-[#f4c430]" />
+            Receipt summary
+          </p>
+          <ReceiptRow label="Service" value={booking.service} />
+          <ReceiptRow label="Appointment" value={booking.time} />
+          <ReceiptRow label="Service total" value={formatCurrency(serviceTotal)} />
+          <ReceiptRow label="Taxes" value={formatCurrency(taxes)} />
+          <ReceiptRow label="Tip" value={formatCurrency(tipAmount)} highlight />
+          <ReceiptRow label="Total paid" value={formatCurrency(finalTotal)} strong />
+          <p className="mt-3 text-xs font-bold text-white/48">Receipt {receiptId}. Tip is stored separately from service revenue for payout and refund reporting.</p>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          <button className="rounded-2xl bg-white px-3 py-3 text-sm font-black text-black" type="button">
+            Leave a Review
+          </button>
+          <button className="flex items-center justify-center gap-2 rounded-2xl bg-white/10 px-3 py-3 text-sm font-black text-white" type="button">
+            <Camera size={16} />
+            Upload haircut photos
+          </button>
+          <button className="rounded-2xl bg-[#f4c430] px-3 py-3 text-sm font-black text-black" type="button">
+            Book next appointment
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4">
+    <div className="mt-4 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 p-4">
       <p className="flex items-center gap-2 font-black text-emerald-300">
         <CheckCircle2 size={19} />
         Booking request sent
@@ -1264,8 +1379,104 @@ function BookingConfirmation({ booking }: { booking: BookingRequest }) {
         <ShieldCheck size={17} className="text-[#f4c430]" />
         Synced to Frizi Pro booking queue for the professional app demo.
       </p>
+      <div className="mt-4 rounded-2xl border border-white/10 bg-[#101014] p-4">
+        <p className="flex items-center gap-2 text-lg font-black text-white">
+          <CreditCard size={19} className="text-[#f4c430]" />
+          Add gratuity before payment
+        </p>
+        <p className="mt-1 text-sm leading-6 text-white/62">Tips are optional and go with the individual professional's earnings history.</p>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[15, 18, 20, 25].map((percent) => (
+            <button
+              key={percent}
+              className={`rounded-2xl px-3 py-3 text-sm font-black ${
+                tipChoice === percent ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
+              }`}
+              type="button"
+              onClick={() => setTipChoice(percent as TipChoice)}
+            >
+              {percent}%
+            </button>
+          ))}
+          <button
+            className={`rounded-2xl px-3 py-3 text-sm font-black ${
+              tipChoice === 'custom' ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
+            }`}
+            type="button"
+            onClick={() => setTipChoice('custom')}
+          >
+            Custom
+          </button>
+          <button
+            className={`rounded-2xl px-3 py-3 text-sm font-black ${
+              tipChoice === 'none' ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
+            }`}
+            type="button"
+            onClick={() => setTipChoice('none')}
+          >
+            No Tip
+          </button>
+        </div>
+        {tipChoice === 'custom' ? (
+          <label className="mt-3 block">
+            <span className="text-xs font-black uppercase tracking-[0.14em] text-white/50">Custom tip amount</span>
+            <input
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 font-bold text-white outline-none placeholder:text-white/35"
+              inputMode="decimal"
+              placeholder="$20.00"
+              value={customTip}
+              onChange={(event) => setCustomTip(event.target.value)}
+            />
+          </label>
+        ) : null}
+        <div className="mt-4 rounded-2xl bg-black/28 p-4">
+          <ReceiptRow label="Service Total" value={formatCurrency(serviceTotal)} />
+          <ReceiptRow label="Taxes" value={formatCurrency(taxes)} />
+          <ReceiptRow label="Optional Tip" value={formatCurrency(tipAmount)} highlight />
+          <ReceiptRow label="Final Total" value={formatCurrency(finalTotal)} strong />
+        </div>
+        <button
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
+          type="button"
+          onClick={() => setPaymentComplete(true)}
+        >
+          Confirm payment
+          <ChevronRight size={18} />
+        </button>
+      </div>
     </div>
   );
+}
+
+function ReceiptRow({
+  highlight,
+  label,
+  strong,
+  value,
+}: {
+  highlight?: boolean;
+  label: string;
+  strong?: boolean;
+  value: string;
+}) {
+  return (
+    <div className={`flex items-center justify-between gap-3 py-1 ${strong ? 'border-t border-white/10 pt-3 text-lg' : 'text-sm'}`}>
+      <span className={strong ? 'font-black text-white' : 'font-semibold text-white/62'}>{label}</span>
+      <span className={`font-black ${highlight ? 'text-[#f4c430]' : 'text-white'}`}>{value}</span>
+    </div>
+  );
+}
+
+function parseMoneyToCents(value: string) {
+  const parsed = Number(value.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+}
+
+function formatCurrency(cents: number) {
+  return new Intl.NumberFormat('en-CA', {
+    style: 'currency',
+    currency: 'CAD',
+  }).format(cents / 100);
 }
 
 function rankProfessionals(query: string) {
