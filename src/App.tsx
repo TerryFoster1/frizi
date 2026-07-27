@@ -1342,7 +1342,7 @@ function ProfileDetails({
   setSelectedService: (value: string) => void;
   setSelectedTime: (value: string) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'reviews'>('overview');
+  const [showReviews, setShowReviews] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
   const availabilityDays = useMemo(() => buildAvailabilityDays(profile.bookingSlots), [profile.bookingSlots]);
@@ -1398,37 +1398,31 @@ function ProfileDetails({
           <p className="text-lg font-black text-[#f4c430]">{profile.promotion}</p>
           <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button">
             <Send size={18} />
-            Save promo to my account
+            Apply Promotion
           </button>
         </div>
 
-        {activeTab === 'overview' ? (
-          <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-            <button
-              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
-              type="button"
-              onClick={() => setBookingOpen((current) => !current)}
-            >
-              <CalendarDays size={20} />
-              Book with stylist
-            </button>
-          </div>
-        ) : null}
+        <button
+          className="inline-flex items-center gap-2 px-1 py-2 text-sm font-black text-[#f4c430]"
+          type="button"
+          onClick={() => setShowReviews((current) => !current)}
+        >
+          Reviews {profile.rating}
+          <Star size={16} fill="currentColor" />
+        </button>
 
-        <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-white/10 bg-[#151519] p-2">
-          {(['overview', 'reviews'] as const).map((tab) => (
-            <button
-              key={tab}
-              className={`min-h-12 rounded-2xl text-sm font-black ${activeTab === tab ? 'bg-[#f4c430] text-black' : 'text-white'}`}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab === 'overview' ? 'Details' : 'Reviews'}
-            </button>
-          ))}
+        <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
+          <button
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
+            type="button"
+            onClick={() => setBookingOpen((current) => !current)}
+          >
+            <CalendarDays size={20} />
+            Book with stylist
+          </button>
         </div>
 
-        {activeTab === 'overview' && bookingOpen ? (
+        {bookingOpen ? (
           <div className="space-y-4 rounded-[28px] border border-white/10 bg-[#151519] p-5">
             <button
               className="flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-left"
@@ -1509,7 +1503,7 @@ function ProfileDetails({
           </div>
         ) : null}
 
-        {activeTab === 'reviews' ? (
+        {showReviews ? (
           <Panel title="Reviews">
             <div className="space-y-3">
               {profile.clientReviews.map((review) => (
