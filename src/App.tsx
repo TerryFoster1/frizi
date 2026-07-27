@@ -3,7 +3,6 @@ import {
   Camera,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   CreditCard,
   Gift,
@@ -19,7 +18,7 @@ import {
   Star,
   User,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 type Service = {
   name: string;
@@ -544,19 +543,23 @@ function App() {
     });
   }
 
+  const showResults = hasSearched && Boolean(activeProfile);
+
   return (
     <main className="min-h-screen bg-[#080808] pb-24 text-white">
-      <header className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-[#080808]/88 px-4 py-3 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
-          <button className="flex items-center gap-2" type="button" onClick={() => setActiveClientNav(null)}>
-            <img className="h-10 w-10 rounded-xl border border-[#f4c430]/55 object-cover" src="/frizi-icon.png" alt="" />
-            <span className="text-lg font-black text-[#f4c430]">Frizi</span>
-          </button>
-          <button className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white" type="button">
-            Sign in/up
-          </button>
-        </div>
-      </header>
+      {!showResults ? (
+        <header className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-[#080808]/88 px-4 py-3 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+            <button className="flex items-center gap-2" type="button" onClick={() => setActiveClientNav(null)}>
+              <img className="h-10 w-10 rounded-xl border border-[#f4c430]/55 object-cover" src="/frizi-icon.png" alt="" />
+              <span className="text-lg font-black text-[#f4c430]">Frizi</span>
+            </button>
+            <button className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white" type="button">
+              Sign in/up
+            </button>
+          </div>
+        </header>
+      ) : null}
 
       {activeClientNav ? (
           <ClientNavScreen
@@ -577,20 +580,22 @@ function App() {
         />
       ) : (
         <>
-          <HeroSearch
-            isListening={isListening}
-            onMic={demoMicSearch}
-            onSubmit={submitSearch}
-            query={query}
-            setQuery={setQuery}
-            filters={filters}
-            setFilters={setFilters}
-            hasSearched={hasSearched}
-            resultCount={rankedProfiles.length}
-          />
+          {!hasSearched ? (
+            <HeroSearch
+              isListening={isListening}
+              onMic={demoMicSearch}
+              onSubmit={submitSearch}
+              query={query}
+              setQuery={setQuery}
+              filters={filters}
+              setFilters={setFilters}
+              hasSearched={hasSearched}
+              resultCount={rankedProfiles.length}
+            />
+          ) : null}
           {hasSearched && activeProfile ? (
-            <section className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,480px)_1fr] lg:items-start lg:px-8">
-              <aside className="lg:sticky lg:top-24">
+            <ResultsExperience
+              deck={
                 <DeckCard
                   activeIndex={activeIndex}
                   isSaved={savedIds.includes(activeProfile.id)}
@@ -600,18 +605,24 @@ function App() {
                   profile={activeProfile}
                   total={rankedProfiles.length}
                 />
-              </aside>
-
+              }
+              details={
               <ProfileDetails
                 booking={booking}
+                isListening={isListening}
+                onMic={demoMicSearch}
                 onBook={confirmBooking}
+                onSearch={submitSearch}
                 profile={activeProfile}
+                query={query}
                 selectedService={activeService}
                 selectedTime={activeTime}
+                setQuery={setQuery}
                 setSelectedService={setSelectedService}
                 setSelectedTime={setSelectedTime}
               />
-            </section>
+              }
+            />
           ) : null}
           {hasSearched && !activeProfile ? <NoLocalMatches /> : null}
         </>
@@ -1039,6 +1050,15 @@ function NoLocalMatches() {
   );
 }
 
+function ResultsExperience({ deck, details }: { deck: ReactNode; details: ReactNode }) {
+  return (
+    <section className="bg-[#080808]">
+      {deck}
+      {details}
+    </section>
+  );
+}
+
 function DeckCard({
   activeIndex,
   isSaved,
@@ -1056,18 +1076,40 @@ function DeckCard({
   profile: Professional;
   total: number;
 }) {
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+
+  function finishSwipe(clientX: number) {
+    if (touchStartX === null) return;
+    const delta = clientX - touchStartX;
+    if (Math.abs(delta) < 48) return;
+    if (delta < 0) {
+      onNext();
+    } else {
+      onPrevious();
+    }
+  }
+
   return (
-    <section className="overflow-hidden rounded-[34px] border border-white/10 bg-[#151519] shadow-2xl shadow-black/50">
-      <div className="relative min-h-[78svh] lg:min-h-[650px]">
+    <section
+      className="relative h-[100svh] overflow-hidden bg-black"
+      onPointerDown={(event) => setTouchStartX(event.clientX)}
+      onPointerUp={(event) => {
+        finishSwipe(event.clientX);
+        setTouchStartX(null);
+      }}
+    >
+      <div className="relative h-full">
         <img
-          alt={`${profile.name} haircut example`}
+          alt={`${profile.name} professional profile`}
           className="absolute inset-0 h-full w-full object-cover"
           src={profile.heroImage}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/10 to-black/88" />
-        <div className="absolute left-4 right-4 top-4 flex items-center justify-between">
-          <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-black uppercase tracking-[0.14em] text-[#f4c430] backdrop-blur">
-            {activeIndex + 1} of {total}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/8 to-black/82" />
+        <button className="absolute left-0 top-0 h-full w-1/3" type="button" aria-label="Previous professional" onClick={onPrevious} />
+        <button className="absolute right-0 top-0 h-full w-1/3" type="button" aria-label="Next professional" onClick={onNext} />
+        <div className="absolute right-4 top-4 z-10 flex items-center gap-3 pt-safe">
+          <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-black text-white/72 backdrop-blur">
+            {activeIndex + 1}/{total}
           </span>
           <button
             aria-label={isSaved ? `Remove ${profile.name} from saved` : `Save ${profile.name}`}
@@ -1080,49 +1122,21 @@ function DeckCard({
             <Star size={22} fill={isSaved ? 'currentColor' : 'none'} />
           </button>
         </div>
-        <div className="absolute bottom-0 left-0 right-0 p-5">
-          <div className="mb-4 flex flex-wrap gap-2">
-            {profile.specialties.slice(0, 3).map((tag) => (
-              <span key={tag} className="rounded-full bg-white/15 px-3 py-1 text-xs font-black text-white backdrop-blur">
-                {tag}
-              </span>
-            ))}
-          </div>
-          <h2 className="text-4xl font-black leading-none">{profile.name}</h2>
-          <p className="mt-2 text-base font-bold text-white/75">{profile.role}</p>
-          <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-white/70">
-            <MapPin size={16} />
-            {profile.neighborhood} - {profile.distance}
+        <div className="absolute bottom-0 right-0 z-10 max-w-[86%] p-5 text-right sm:max-w-xl sm:p-8">
+          <h2 className="text-5xl font-black leading-none drop-shadow-2xl sm:text-7xl">{profile.name}</h2>
+          <p className="ml-auto mt-3 max-w-md text-base font-semibold leading-6 text-white/82 drop-shadow sm:text-lg">
+            {profile.whyMatch}
           </p>
-          <p className="mt-2 text-sm font-black text-[#f4c430]">{matchPercent(profile)}% match</p>
-          <div className="mt-5 grid grid-cols-[58px_1fr_58px] items-center gap-3">
-            <button
-              aria-label="Previous professional"
-              className="grid h-14 w-14 place-items-center rounded-full border border-white/12 bg-white/10 text-white"
-              type="button"
-              onClick={onPrevious}
-            >
-              <ChevronLeft size={30} />
-            </button>
-            <a
-              className="rounded-full bg-[#f4c430] px-5 py-4 text-center text-base font-black text-black"
-              href="#booking"
-            >
-              See details and book
-            </a>
-            <button
-              aria-label="Next professional"
-              className="grid h-14 w-14 place-items-center rounded-full bg-white text-black"
-              type="button"
-              onClick={onNext}
-            >
-              <ChevronRight size={30} />
-            </button>
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm font-black text-white">
+            <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
+              <Star className="text-[#f4c430]" size={16} fill="currentColor" />
+              {profile.rating}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
+              <MapPin className="text-[#f4c430]" size={16} />
+              {profile.distance}
+            </span>
           </div>
-          <p className="mt-4 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-white/45">
-            <ChevronDown size={16} />
-            Swipe left or right, then scroll for details
-          </p>
         </div>
       </div>
     </section>
@@ -1131,132 +1145,174 @@ function DeckCard({
 
 function ProfileDetails({
   booking,
+  isListening,
+  onMic,
   onBook,
+  onSearch,
   profile,
+  query,
   selectedService,
   selectedTime,
+  setQuery,
   setSelectedService,
   setSelectedTime,
 }: {
   booking: BookingRequest | null;
+  isListening: boolean;
+  onMic: () => void;
   onBook: () => void;
+  onSearch: () => void;
   profile: Professional;
+  query: string;
   selectedService: string;
   selectedTime: string;
+  setQuery: (value: string) => void;
   setSelectedService: (value: string) => void;
   setSelectedTime: (value: string) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'reviews'>('overview');
+
   return (
-    <section className="space-y-4 pb-24" id="booking">
-      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-        <div className="flex items-start gap-4">
-          <img
-            alt={`${profile.name} profile`}
-            className="h-24 w-24 rounded-3xl object-cover"
-            src={profile.detailImage}
+    <section className="min-h-screen bg-[#080808] pb-28" id="booking">
+      <div className="sticky top-0 z-40 border-b border-white/10 bg-[#080808]/92 px-4 py-3 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3 py-2">
+          <Search className="shrink-0 text-[#f4c430]" size={18} />
+          <input
+            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/42"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                onSearch();
+              }
+            }}
+            placeholder="I am looking for....."
           />
-          <div className="min-w-0 flex-1">
-            <p className="flex items-center gap-1 text-sm font-black text-[#f4c430]">
-              <Star size={16} fill="currentColor" />
-              {profile.rating} from {profile.reviews} reviews
-            </p>
-            <h3 className="mt-1 text-2xl font-black">{profile.studio}</h3>
-            <p className="mt-2 text-sm font-semibold leading-6 text-white/64">{profile.whyMatch}</p>
-          </div>
-        </div>
-        <div className="mt-5 grid grid-cols-3 gap-2 text-center">
-          <InfoTile label="Repeat" value={profile.repeatRate} />
-          <InfoTile label="Next" value={profile.nextAvailable} />
-          <InfoTile label="Distance" value={profile.distance} />
+          <button
+            aria-label="Voice search"
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${
+              isListening ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
+            }`}
+            type="button"
+            onClick={onMic}
+          >
+            <Mic size={16} />
+          </button>
         </div>
       </div>
 
-      <Panel title="Profile">
-        <p className="text-base leading-7 text-white/72">{profile.bio}</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {[...profile.specialties, ...profile.accommodations].map((tag) => (
-            <span key={tag} className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-sm font-bold text-white/76">
-              {tag}
-            </span>
-          ))}
+      <div className="mx-auto max-w-5xl space-y-4 px-4 py-5 sm:px-6">
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <div className="flex items-start gap-4">
+            <img
+              alt={`${profile.name} profile`}
+              className="h-24 w-24 rounded-3xl object-cover"
+              src={profile.detailImage}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black text-[#f4c430]">{profile.studio}</p>
+              <h3 className="mt-1 text-2xl font-black">{profile.name}</h3>
+              <p className="mt-2 text-sm font-semibold leading-6 text-white/64">{profile.role} in {profile.neighborhood}</p>
+            </div>
+          </div>
+          <p className="mt-5 text-base leading-7 text-white/72">{profile.bio}</p>
+          <div className="mt-5 grid grid-cols-3 gap-2 text-center">
+            <InfoTile label="Rating" value={`${profile.rating}`} />
+            <InfoTile label="Reviews" value={`${profile.reviews}`} />
+            <InfoTile label="Distance" value={profile.distance} />
+          </div>
         </div>
-      </Panel>
 
-      <Panel title="Pricing">
-        <div className="space-y-2">
-          {profile.services.map((service) => (
+        <Panel title="Current Promotion">
+          <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
+            <p className="text-lg font-black text-[#f4c430]">{profile.promotion}</p>
+            <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button">
+              <Send size={18} />
+              Save promo to my account
+            </button>
+          </div>
+        </Panel>
+
+        <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-white/10 bg-[#151519] p-2">
+          {(['overview', 'reviews'] as const).map((tab) => (
             <button
-              key={service.name}
-              className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
-                selectedService === service.name
-                  ? 'border-[#f4c430] bg-[#f4c430]/12'
-                  : 'border-white/10 bg-white/[0.04]'
-              }`}
+              key={tab}
+              className={`min-h-12 rounded-2xl text-sm font-black ${activeTab === tab ? 'bg-[#f4c430] text-black' : 'text-white'}`}
               type="button"
-              onClick={() => setSelectedService(service.name)}
+              onClick={() => setActiveTab(tab)}
             >
-              <span>
-                <span className="block font-black">{service.name}</span>
-                <span className="text-sm font-semibold text-white/52">{service.duration}</span>
-              </span>
-              <span className="text-lg font-black text-[#f4c430]">{service.price}</span>
+              {tab === 'overview' ? 'Details' : 'Reviews'}
             </button>
           ))}
         </div>
-      </Panel>
 
-      <Panel title="Booking Options">
-        <div className="grid grid-cols-2 gap-2">
-          {profile.bookingSlots.map((slot) => (
+        {activeTab === 'overview' ? (
+          <Panel title="Book with stylist">
+            <div className="space-y-2">
+              {profile.services.map((service) => (
+                <button
+                  key={service.name}
+                  className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
+                    selectedService === service.name
+                      ? 'border-[#f4c430] bg-[#f4c430]/12'
+                      : 'border-white/10 bg-white/[0.04]'
+                  }`}
+                  type="button"
+                  onClick={() => setSelectedService(service.name)}
+                >
+                  <span>
+                    <span className="block font-black">{service.name}</span>
+                    <span className="text-sm font-semibold text-white/52">{service.duration}</span>
+                  </span>
+                  <span className="text-lg font-black text-[#f4c430]">{service.price}</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {profile.bookingSlots.map((slot) => (
+                <button
+                  key={slot}
+                  className={`rounded-2xl border px-3 py-4 text-sm font-black ${
+                    selectedTime === slot ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/10 bg-white/[0.04] text-white'
+                  }`}
+                  type="button"
+                  onClick={() => setSelectedTime(slot)}
+                >
+                  {slot}
+                </button>
+              ))}
+            </div>
             <button
-              key={slot}
-              className={`rounded-2xl border px-3 py-4 text-sm font-black ${
-                selectedTime === slot ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/10 bg-white/[0.04] text-white'
-              }`}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
               type="button"
-              onClick={() => setSelectedTime(slot)}
+              onClick={onBook}
             >
-              {slot}
+              <CalendarDays size={20} />
+              Book with stylist
             </button>
-          ))}
-        </div>
-        <button
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
-          type="button"
-          onClick={onBook}
-        >
-          <CalendarDays size={20} />
-          Request booking
-        </button>
-        {booking ? <BookingConfirmation booking={booking} /> : null}
-      </Panel>
+            {booking ? <BookingConfirmation booking={booking} /> : null}
+          </Panel>
+        ) : null}
 
-      <Panel title="Reviews">
-        <div className="space-y-3">
-          {profile.clientReviews.map((review) => (
-            <article key={review.name} className="rounded-2xl bg-white/[0.05] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-black">{review.name}</p>
-                <p className="flex items-center gap-1 text-sm font-black text-[#f4c430]">
-                  <Star size={15} fill="currentColor" />
-                  {review.rating}.0
-                </p>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-white/68">{review.text}</p>
-            </article>
-          ))}
-        </div>
-      </Panel>
-
-      <Panel title="Current Promotion">
-        <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-          <p className="text-lg font-black text-[#f4c430]">{profile.promotion}</p>
-          <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button">
-            <Send size={18} />
-            Save promo to my account
-          </button>
-        </div>
-      </Panel>
+        {activeTab === 'reviews' ? (
+          <Panel title="Reviews">
+            <div className="space-y-3">
+              {profile.clientReviews.map((review) => (
+                <article key={review.name} className="rounded-2xl bg-white/[0.05] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-black">{review.name}</p>
+                    <p className="flex items-center gap-1 text-sm font-black text-[#f4c430]">
+                      <Star size={15} fill="currentColor" />
+                      {review.rating}.0
+                    </p>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-white/68">{review.text}</p>
+                </article>
+              ))}
+            </div>
+          </Panel>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -1698,13 +1754,6 @@ function scoreProfile(profile: Professional, tokens: string[]) {
     if (haystack.includes(token)) return score + 3;
     return score;
   }, profile.id === 'mara' ? 2 : 0);
-}
-
-function matchPercent(profile: Professional) {
-  if (profile.id === 'omar') return 98;
-  if (profile.id === 'mara') return 91;
-  if (profile.id === 'sol') return 87;
-  return 82;
 }
 
 export default App;
