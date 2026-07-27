@@ -180,8 +180,8 @@ const professionals: Professional[] = [
     accommodations: ['Queer friendly', 'Quiet appointment', 'On public transit', 'Photo history'],
     searchTerms: ['curl', 'curly', 'fine hair', 'color', 'quiet', 'women', 'natural curls'],
     whyMatch:
-      'Connected to the Hairline Pro demo profile, including reviews, promotion, and available bookings.',
-    bio: 'Mara is the professional shown in the Hairline Pro app. Her client notes, photo history, reviews, promotions, and booking requests sync into the pro-side demo.',
+      'Connected to the Frizi Pro demo profile, including reviews, promotion, and available bookings.',
+    bio: 'Mara is the professional shown in the Frizi Pro app. Her client notes, photo history, reviews, promotions, and booking requests sync into the pro-side demo.',
     services: [
       { name: 'Dry curl cut', duration: '75 min', price: '$115' },
       { name: 'Fine hair shaping', duration: '60 min', price: '$95' },
@@ -477,7 +477,10 @@ function App() {
         <header className="sticky top-0 z-40 -mx-4 border-b border-white/10 bg-[#080808]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#f4c430]">Hairline</p>
+              <div className="mb-2 flex items-center gap-2">
+                <img className="h-9 w-9 rounded-xl border border-[#f4c430]/55 object-cover" src="/frizi-icon.png" alt="" />
+                <p className="text-sm font-black text-[#f4c430]">Frizi</p>
+              </div>
               <h1 className="text-2xl font-black leading-none sm:text-3xl">Find your person</h1>
             </div>
             <div className="rounded-full border border-[#f4c430]/50 px-3 py-1 text-sm font-black text-[#f4c430]">
@@ -786,7 +789,7 @@ function SearchPanel({
               onSubmit();
             }
           }}
-          placeholder="Tell Hairline exactly what you need"
+          placeholder="Tell Frizi exactly what you need"
         />
         <button
           aria-label="Demo voice search"
@@ -1083,7 +1086,7 @@ function BookingConfirmation({ booking }: { booking: BookingRequest }) {
       </p>
       <p className="mt-3 flex items-center gap-2 rounded-xl bg-black/25 px-3 py-2 text-sm font-bold text-white/68">
         <ShieldCheck size={17} className="text-[#f4c430]" />
-        Synced to Hairline Pro booking queue for the professional app demo.
+        Synced to Frizi Pro booking queue for the professional app demo.
       </p>
     </div>
   );
