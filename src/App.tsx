@@ -3,6 +3,7 @@ import {
   Camera,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CreditCard,
   Gift,
@@ -1574,6 +1575,25 @@ function ProfileDetails({
   const availabilityDays = useMemo(() => buildAvailabilityDays(profile.bookingSlots), [profile.bookingSlots]);
   const selectedDay = availabilityDays.find((day) => day.times.includes(selectedTime)) || availabilityDays[0];
 
+  if (bookingOpen) {
+    return (
+      <BookingCalendarPage
+        availabilityDays={availabilityDays}
+        booking={booking}
+        onBack={() => setBookingOpen(false)}
+        onBook={onBook}
+        profile={profile}
+        selectedDay={selectedDay}
+        selectedService={selectedService}
+        selectedTime={selectedTime}
+        servicesOpen={servicesOpen}
+        setSelectedService={setSelectedService}
+        setSelectedTime={setSelectedTime}
+        setServicesOpen={setServicesOpen}
+      />
+    );
+  }
+
   return (
     <section className="min-h-screen bg-[#080808] pb-28" id="booking">
       <div className="sticky top-0 z-40 border-b border-white/10 bg-[#080808]/92 px-4 py-3 backdrop-blur-xl">
@@ -1637,7 +1657,7 @@ function ProfileDetails({
           <button
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
             type="button"
-            onClick={() => setBookingOpen((current) => !current)}
+            onClick={() => setBookingOpen(true)}
           >
             <CalendarDays size={20} />
             Book an appointment
@@ -1652,87 +1672,6 @@ function ProfileDetails({
           Reviews {profile.rating}
           <Star size={16} fill="currentColor" />
         </button>
-
-        {bookingOpen ? (
-          <div className="space-y-4 rounded-[28px] border border-white/10 bg-[#151519] p-5">
-            <button
-              className="flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-left"
-              type="button"
-              onClick={() => setServicesOpen((current) => !current)}
-            >
-              <span>
-                <span className="block text-sm font-black text-white">Service</span>
-                <span className="block text-sm font-semibold text-white/58">{selectedService || profile.services[0].name}</span>
-              </span>
-              <ChevronDown className={`text-[#f4c430] transition-transform ${servicesOpen ? 'rotate-180' : ''}`} size={20} />
-            </button>
-            {servicesOpen ? (
-              <div className="space-y-2">
-                {profile.services.map((service) => (
-                  <button
-                    key={service.name}
-                    className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
-                      selectedService === service.name
-                        ? 'border-[#f4c430] bg-[#f4c430]/12'
-                        : 'border-white/10 bg-white/[0.04]'
-                    }`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedService(service.name);
-                      setServicesOpen(false);
-                    }}
-                  >
-                    <span>
-                      <span className="block font-black">{service.name}</span>
-                      <span className="text-sm font-semibold text-white/52">{service.duration}</span>
-                    </span>
-                    <span className="text-lg font-black text-[#f4c430]">{service.price}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="grid grid-cols-4 gap-2">
-              {availabilityDays.map((day) => (
-                <button
-                  key={day.label}
-                  className={`min-h-20 rounded-2xl border px-2 py-3 text-center ${
-                    selectedDay.label === day.label ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/10 bg-white/[0.04] text-white'
-                  }`}
-                  type="button"
-                  onClick={() => setSelectedTime(day.times[0])}
-                >
-                  <span className="block text-xs font-black uppercase">{day.weekday}</span>
-                  <span className="mt-1 block text-2xl font-black">{day.dayNumber}</span>
-                  <span className={`mx-auto mt-1 block h-1.5 w-1.5 rounded-full ${selectedDay.label === day.label ? 'bg-black' : 'bg-[#f4c430]'}`} />
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {selectedDay.times.map((slot) => (
-                <button
-                  key={slot}
-                  className={`rounded-2xl border px-3 py-4 text-sm font-black ${
-                    selectedTime === slot ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/10 bg-white/[0.04] text-white'
-                  }`}
-                  type="button"
-                  onClick={() => setSelectedTime(slot)}
-                >
-                  {formatSlotTime(slot)}
-                </button>
-              ))}
-            </div>
-            <button
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
-              type="button"
-              onClick={onBook}
-            >
-              <CalendarDays size={20} />
-              Book an appointment
-            </button>
-            {booking ? <BookingConfirmation booking={booking} /> : null}
-          </div>
-        ) : null}
 
         {showReviews ? (
           <Panel title="Reviews">
@@ -1752,6 +1691,189 @@ function ProfileDetails({
             </div>
           </Panel>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+function BookingCalendarPage({
+  availabilityDays,
+  booking,
+  onBack,
+  onBook,
+  profile,
+  selectedDay,
+  selectedService,
+  selectedTime,
+  servicesOpen,
+  setSelectedService,
+  setSelectedTime,
+  setServicesOpen,
+}: {
+  availabilityDays: ReturnType<typeof buildAvailabilityDays>;
+  booking: BookingRequest | null;
+  onBack: () => void;
+  onBook: () => void;
+  profile: Professional;
+  selectedDay: ReturnType<typeof buildAvailabilityDays>[number];
+  selectedService: string;
+  selectedTime: string;
+  servicesOpen: boolean;
+  setSelectedService: (value: string) => void;
+  setSelectedTime: (value: string) => void;
+  setServicesOpen: (value: boolean | ((current: boolean) => boolean)) => void;
+}) {
+  const [monthCursor, setMonthCursor] = useState(() => startOfMonth(selectedDay?.date ?? new Date()));
+  const availableByDate = useMemo(
+    () => new Map(availabilityDays.map((day) => [dateKey(day.date), day])),
+    [availabilityDays],
+  );
+  const monthCells = useMemo(() => buildMonthCells(monthCursor), [monthCursor]);
+  const monthLabel = monthCursor.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  return (
+    <section className="min-h-screen bg-[#080808] px-4 pb-28 pt-5 text-white sm:px-6">
+      <div className="mx-auto max-w-5xl">
+        <button className="mb-5 inline-flex items-center gap-2 py-2 text-sm font-black text-[#f4c430]" type="button" onClick={onBack}>
+          <ChevronLeft size={18} />
+          Back to profile
+        </button>
+
+        <div className="mb-5 flex items-center gap-4 rounded-[28px] border border-white/10 bg-[#151519] p-4">
+          <img className="h-16 w-16 rounded-2xl object-cover" src={profile.detailImage} alt="" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-black text-[#f4c430]">{profile.studio}</p>
+            <h2 className="text-2xl font-black">{profile.name}</h2>
+            <p className="text-sm font-semibold text-white/58">{profile.role}</p>
+          </div>
+        </div>
+
+        <div className="rounded-[28px] border border-white/10 bg-[#101014] p-4 sm:p-6">
+          <div className="mb-6 flex items-center justify-between gap-3">
+            <h1 className="text-3xl font-black sm:text-4xl">{monthLabel}</h1>
+            <div className="flex gap-2">
+              <button
+                aria-label="Previous month"
+                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.06]"
+                type="button"
+                onClick={() => setMonthCursor((date) => addMonths(date, -1))}
+              >
+                <ChevronLeft size={24} />
+              </button>
+              <button
+                aria-label="Next month"
+                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.06]"
+                type="button"
+                onClick={() => setMonthCursor((date) => addMonths(date, 1))}
+              >
+                <ChevronRight size={24} />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-7 gap-2 text-center text-xs font-black text-white/64 sm:gap-3">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+              <div key={day}>{day}</div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid grid-cols-7 gap-2 sm:gap-3">
+            {monthCells.map((cell, index) => {
+              const availableDay = cell ? availableByDate.get(dateKey(cell)) : undefined;
+              const isSelected = availableDay?.label === selectedDay?.label;
+              return (
+                <button
+                  key={cell ? dateKey(cell) : `blank-${index}`}
+                  className={`aspect-square rounded-xl border text-center text-lg font-black sm:rounded-2xl sm:text-2xl ${
+                    isSelected
+                      ? 'border-[#f4c430] bg-[#f4c430] text-black'
+                      : availableDay
+                        ? 'border-white/12 bg-white/[0.06] text-white'
+                        : 'border-transparent bg-transparent text-white/22'
+                  }`}
+                  type="button"
+                  disabled={!availableDay}
+                  onClick={() => availableDay && setSelectedTime(availableDay.times[0])}
+                >
+                  {cell ? (
+                    <span className="flex h-full flex-col items-center justify-center">
+                      {cell.getDate()}
+                      {availableDay ? <span className={`mt-1 h-1.5 w-1.5 rounded-full ${isSelected ? 'bg-black' : 'bg-[#f4c430]'}`} /> : null}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-4 rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <button
+            className="flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-left"
+            type="button"
+            onClick={() => setServicesOpen((current) => !current)}
+          >
+            <span>
+              <span className="block text-sm font-black text-white">Service</span>
+              <span className="block text-sm font-semibold text-white/58">{selectedService || profile.services[0].name}</span>
+            </span>
+            <ChevronDown className={`text-[#f4c430] transition-transform ${servicesOpen ? 'rotate-180' : ''}`} size={20} />
+          </button>
+
+          {servicesOpen ? (
+            <div className="space-y-2">
+              {profile.services.map((service) => (
+                <button
+                  key={service.name}
+                  className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
+                    selectedService === service.name ? 'border-[#f4c430] bg-[#f4c430]/12' : 'border-white/10 bg-white/[0.04]'
+                  }`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedService(service.name);
+                    setServicesOpen(false);
+                  }}
+                >
+                  <span>
+                    <span className="block font-black">{service.name}</span>
+                    <span className="text-sm font-semibold text-white/52">{service.duration}</span>
+                  </span>
+                  <span className="text-lg font-black text-[#f4c430]">{service.price}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div>
+            <p className="text-sm font-black text-[#f4c430]">
+              {selectedDay ? selectedDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Select a day'}
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(selectedDay?.times ?? []).map((slot) => (
+                <button
+                  key={slot}
+                  className={`rounded-2xl border px-3 py-4 text-sm font-black ${
+                    selectedTime === slot ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/10 bg-white/[0.04] text-white'
+                  }`}
+                  type="button"
+                  onClick={() => setSelectedTime(slot)}
+                >
+                  {formatSlotTime(slot)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black" type="button" onClick={onBook}>
+            <CalendarDays size={20} />
+            Book an appointment
+          </button>
+          {booking ? <BookingConfirmation booking={booking} /> : null}
+        </div>
       </div>
     </section>
   );
@@ -2244,6 +2366,18 @@ function buildAvailabilityDays(slots: string[]) {
   return grouped.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
+function buildMonthCells(monthCursor: Date) {
+  const firstDay = startOfMonth(monthCursor);
+  const daysInMonth = new Date(firstDay.getFullYear(), firstDay.getMonth() + 1, 0).getDate();
+  const cells: Array<Date | null> = Array.from({ length: firstDay.getDay() }, () => null);
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(new Date(firstDay.getFullYear(), firstDay.getMonth(), day));
+  }
+
+  return cells;
+}
+
 function dateFromSlot(slot: string) {
   const now = new Date();
   const normalized = slot.toLowerCase();
@@ -2265,10 +2399,22 @@ function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
 function addDays(date: Date, days: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+function addMonths(date: Date, months: number) {
+  return new Date(date.getFullYear(), date.getMonth() + months, 1);
+}
+
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
 function formatSlotTime(slot: string) {
