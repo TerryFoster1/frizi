@@ -654,7 +654,9 @@ function App() {
   const [isListening, setIsListening] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState('');
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authIntent, setAuthIntent] = useState<'default' | 'promo'>('default');
   const [clientSession, setClientSession] = useState<ClientSession | null>(null);
+  const [openBookingAfterAuth, setOpenBookingAfterAuth] = useState(false);
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem(clientSessionStorageKey);
@@ -762,7 +764,18 @@ function App() {
     setClientSession(session);
     window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
     setAuthModalOpen(false);
-    setActiveClientNav('profile');
+    if (authIntent === 'promo') {
+      setOpenBookingAfterAuth(true);
+      setActiveClientNav(null);
+    } else {
+      setActiveClientNav('profile');
+    }
+    setAuthIntent('default');
+  }
+
+  function openClientAuth(intent: 'default' | 'promo' = 'default') {
+    setAuthIntent(intent);
+    setAuthModalOpen(true);
   }
 
   function moveDeck(direction: 'previous' | 'next') {
@@ -810,7 +823,7 @@ function App() {
             <button
               className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
               type="button"
-              onClick={() => (clientSession ? setActiveClientNav('profile') : setAuthModalOpen(true))}
+              onClick={() => (clientSession ? setActiveClientNav('profile') : openClientAuth())}
             >
               {clientSession ? clientSession.name.split(' ')[0] : 'Sign in/up'}
             </button>
@@ -873,10 +886,14 @@ function App() {
               details={
               <ProfileDetails
                 booking={booking}
+                isClientSignedIn={Boolean(clientSession)}
                 onBook={confirmBooking}
+                onPromoSignupRequired={() => openClientAuth('promo')}
+                openBookingAfterAuth={openBookingAfterAuth}
                 profile={activeProfile}
                 selectedService={activeService}
                 selectedTime={activeTime}
+                onBookingAfterAuthHandled={() => setOpenBookingAfterAuth(false)}
                 setSelectedService={setSelectedService}
                 setSelectedTime={setSelectedTime}
               />
@@ -886,7 +903,7 @@ function App() {
           {hasSearched && !activeProfile ? <NoLocalMatches /> : null}
         </>
       )}
-      {authModalOpen ? <ClientAuthModal onClose={() => setAuthModalOpen(false)} onComplete={handleClientAuth} /> : null}
+      {authModalOpen ? <ClientAuthModal intent={authIntent} onClose={() => setAuthModalOpen(false)} onComplete={handleClientAuth} /> : null}
       <ClientFooter activeNav={activeClientNav} onChange={setActiveClientNav} />
     </main>
   );
@@ -1122,9 +1139,11 @@ function InviteLanding({
 }
 
 function ClientAuthModal({
+  intent,
   onClose,
   onComplete,
 }: {
+  intent: 'default' | 'promo';
   onClose: () => void;
   onComplete: (session: ClientSession) => void;
 }) {
@@ -1151,6 +1170,9 @@ function ClientAuthModal({
           <div>
             <p className="text-sm font-black text-[#f4c430]">{mode === 'signup' ? 'Create client account' : 'Welcome back'}</p>
             <h2 className="mt-1 text-3xl font-black">{mode === 'signup' ? 'Join Frizi' : 'Sign in'}</h2>
+            {intent === 'promo' ? (
+              <p className="mt-2 text-sm font-bold leading-6 text-white/68">Sign up for exclusive deals and promos.</p>
+            ) : null}
           </div>
           <button className="rounded-full border border-white/10 px-3 py-2 text-sm font-black text-white/70" type="button" onClick={onClose}>
             Close
@@ -1200,7 +1222,9 @@ function ClientAuthModal({
           {mode === 'signup' ? 'Create account' : 'Sign in'}
         </button>
         <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
-          Demo account flow saves this client session in the browser and opens your Frizi profile.
+          {intent === 'promo'
+            ? 'Promos only apply when booking and paying through Frizi.'
+            : 'Demo account flow saves this client session in the browser and opens your Frizi profile.'}
         </p>
       </section>
     </div>
@@ -1614,7 +1638,11 @@ function DeckCard({
 
 function ProfileDetails({
   booking,
+  isClientSignedIn,
   onBook,
+  onBookingAfterAuthHandled,
+  onPromoSignupRequired,
+  openBookingAfterAuth,
   profile,
   selectedService,
   selectedTime,
@@ -1622,7 +1650,11 @@ function ProfileDetails({
   setSelectedTime,
 }: {
   booking: BookingRequest | null;
+  isClientSignedIn: boolean;
   onBook: () => void;
+  onBookingAfterAuthHandled: () => void;
+  onPromoSignupRequired: () => void;
+  openBookingAfterAuth: boolean;
   profile: Professional;
   selectedService: string;
   selectedTime: string;
@@ -1634,6 +1666,21 @@ function ProfileDetails({
   const [servicesOpen, setServicesOpen] = useState(false);
   const availabilityDays = useMemo(() => buildAvailabilityDays(profile.bookingSlots), [profile.bookingSlots]);
   const selectedDay = availabilityDays.find((day) => day.times.includes(selectedTime)) || availabilityDays[0];
+
+  useEffect(() => {
+    if (!openBookingAfterAuth || !isClientSignedIn) return;
+    setBookingOpen(true);
+    onBookingAfterAuthHandled();
+  }, [isClientSignedIn, onBookingAfterAuthHandled, openBookingAfterAuth]);
+
+  function applyPromotion() {
+    if (isClientSignedIn) {
+      setBookingOpen(true);
+      return;
+    }
+
+    onPromoSignupRequired();
+  }
 
   if (bookingOpen) {
     return (
@@ -1675,7 +1722,8 @@ function ProfileDetails({
 
         <div className="rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
           <p className="text-lg font-black text-[#f4c430]">{profile.promotion}</p>
-          <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button">
+          <p className="mt-2 text-sm font-semibold leading-6 text-white/68">Promo applies only when booked and purchased through the app.</p>
+          <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button" onClick={applyPromotion}>
             <Send size={18} />
             Apply Promotion
           </button>
