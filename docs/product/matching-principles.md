@@ -1,6 +1,6 @@
 # Matching Principles
 
-Hairline's matching system should help customers find professionals with demonstrated experience serving people like them and creating styles similar to what they want.
+Frizi's matching system should help customers find professionals with demonstrated experience serving people like them and creating styles similar to what they want.
 
 ## Inputs
 
@@ -27,7 +27,7 @@ Hairline's matching system should help customers find professionals with demonst
 
 ## Open Design Questions
 
-- Which hair type taxonomy should Hairline use, and how should it avoid being too rigid?
+- Which hair type taxonomy should Frizi use, and how should it avoid being too rigid?
 - How should the app handle customers who are unsure of their hair type?
 - What review prompts best capture useful style and comfort information without making the customer do homework?
 - Should photos be tagged by customers, professionals, or both?

@@ -1,10 +1,8 @@
-# Hairline Client
+# Frizi Client
 
-Hairline Client is the public web app for customers looking for barbers, hairdressers, and stylists.
+Frizi Client is the public web app for customers looking for barbers, hairdressers, and stylists.
 
-The downloaded stylist app is a separate project at:
-
-`C:\Users\kathr\Documents\Claude CoWork Files\Projects\Apps\Hairline stylist`
+The downloaded stylist app is maintained as a separate Frizi Pro project.
 
 ## Client Promise
 

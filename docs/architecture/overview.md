@@ -1,13 +1,13 @@
 # Architecture Overview
 
-Hairline Client is the client-facing web app. It should stay separate from the downloaded stylist app while sharing brand, data contracts, and service boundaries.
+Frizi Client is the client-facing web app. It should stay separate from the downloaded stylist app while sharing brand, data contracts, and service boundaries.
 
 ## Product Boundaries
 
-Hairline has two primary products, but this repository implements only the first:
+Frizi has two primary products, but this repository implements only the first:
 
 - Client web app: search, matching, professional profiles, booking, reviews, customer hair profile, photo history, and consent management.
-- Stylist downloaded app: separate project at `C:\Users\kathr\Documents\Claude CoWork Files\Projects\Apps\Hairline stylist`.
+- Stylist downloaded app: separate Frizi Pro project.
 
 The salon or studio is location context, not the main owner of reputation. Architecture should keep professional identity, reviews, portfolio media, and customer relationships portable across work locations.
 

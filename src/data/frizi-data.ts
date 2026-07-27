@@ -17,7 +17,7 @@ import type {
   StyleGoal,
   Stylist,
   StylistMetric,
-} from '@/types/hairline';
+} from '@/types/frizi';
 
 export const hairTypes: HairType[] = ['Straight', 'Wavy', 'Curly', 'Coily', 'Locs'];
 

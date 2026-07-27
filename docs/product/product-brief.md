@@ -1,6 +1,6 @@
 # Product Brief
 
-Hairline Client is the public web app for people looking for barbers, hairdressers, and stylists.
+Frizi Client is the public web app for people looking for barbers, hairdressers, and stylists.
 
 The core product belief is that a stylist's reputation should belong to the individual professional, not only to the salon where they currently rent a chair or work. Reviews, client photos, booking demand, and proof of specialization should travel with the professional across salons, studios, and independent work.
 
@@ -8,7 +8,7 @@ The core product belief is that a stylist's reputation should belong to the indi
 
 This repository implements only the client-facing web app.
 
-The stylist app is a separate downloaded app located at `C:\Users\kathr\Documents\Claude CoWork Files\Projects\Apps\Hairline stylist`.
+The stylist app is a separate downloaded Frizi Pro app.
 
 The two products share brand, data contracts, and business rules, but they should be built as separate projects.
 
@@ -39,26 +39,26 @@ Customers search for local professionals using natural-language profile data plu
 - Practical needs such as being on a public transit route, parking, private room availability, fragrance awareness, or quiet appointment.
 - Location, availability, price, and service type.
 
-Hairline matches customers with professionals whose real client outcomes, reviews, and tagged photo history are relevant to the customer's stated hair and style profile. Customers search stylists and barbers, not salons. They can read reviews, inspect client photos, compare professionals, and book directly regardless of which salon or studio the professional currently works from.
+Frizi matches customers with professionals whose real client outcomes, reviews, and tagged photo history are relevant to the customer's stated hair and style profile. Customers search stylists and barbers, not salons. They can read reviews, inspect client photos, compare professionals, and book directly regardless of which salon or studio the professional currently works from.
 
 Professional profiles should hide long tag lists by default. Specialties and accommodations should be separate sections with their own expand buttons.
 
 Customers should be able to open a professional profile, swipe or browse full-screen client images, and see overlaid review context on the work.
 
-Booking should open a Calendly-style availability picker. After selecting a time, the customer can book and then choose whether to add the appointment to their calendar. The appointment should also appear in the customer's Hairline profile when they log in.
+Booking should open a Calendly-style availability picker. After selecting a time, the customer can book and then choose whether to add the appointment to their calendar. The appointment should also appear in the customer's Frizi profile when they log in.
 
 ## Companion Stylist App Boundary
 
 Professionals use a separate downloaded app for profile management, bookings, CRM, client photo history, reviews, promotions, relocation notices, and marketing.
 
-Hairline Client must receive approved public profile, availability, review, photo, and consent data from the stylist app. The customer receives appointment photos in their profile. From there, the customer can:
+Frizi Client must receive approved public profile, availability, review, photo, and consent data from the stylist app. The customer receives appointment photos in their profile. From there, the customer can:
 
 - Keep the photo as a personal hair history reference for future appointments.
 - Consent or decline consent for the professional to use the photo for marketing.
 - Leave a review attached to the professional.
 - Confirm or update hair type and style metadata that helps the matching system.
 
-Once consent exists, the professional can use the approved photo and review in their Hairline portfolio and share it directly to social channels such as Instagram.
+Once consent exists, the professional can use the approved photo and review in their Frizi portfolio and share it directly to social channels such as Instagram.
 
 Professionals can also send offers directly to clients, such as limited-time discounts, free product with service, bring-a-friend promotions, loyalty coupons, and location-move announcements.
 
@@ -70,7 +70,7 @@ Customer-entered hair type and style information is important because it keeps s
 
 ## Matching Thesis
 
-Hairline should help customers find professionals who have successfully served people with similar hair, style goals, identity needs, and preferences.
+Frizi should help customers find professionals who have successfully served people with similar hair, style goals, identity needs, and preferences.
 
 The algorithm should use customer-entered metadata, review content, consented portfolio photos, professional service history, and booking context to improve recommendations over time.
 

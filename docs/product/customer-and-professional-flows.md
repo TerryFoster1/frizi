@@ -4,9 +4,9 @@
 
 1. Customer creates a profile or begins search as a guest.
 2. Customer enters location, hair type, style goal, service needs, and comfort filters.
-3. Hairline returns professionals ranked by relevance, proof, availability, and distance.
+3. Frizi returns professionals ranked by relevance, proof, availability, and distance.
 4. Customer opens a professional profile to review portfolio photos, client reviews, service menu, pricing, location, and availability.
-5. Customer books directly through Hairline.
+5. Customer books directly through Frizi.
 
 ## Appointment Outcome Flow
 
@@ -15,12 +15,12 @@
 3. Professional attaches the photo to the customer's CRM profile and appointment record.
 4. Customer receives the photo in their profile.
 5. Customer can save it privately, consent to marketing use, leave a review, and confirm hair/style metadata.
-6. Approved photos and reviews become usable in the professional's public Hairline profile.
+6. Approved photos and reviews become usable in the professional's public Frizi profile.
 7. Professional can share approved assets to Instagram or other channels.
 
 ## Customer Hair History Flow
 
-Customers should build a private visual history of their hair over time. This history helps them remember what they liked, show future professionals what they want, and improve Hairline's recommendations.
+Customers should build a private visual history of their hair over time. This history helps them remember what they liked, show future professionals what they want, and improve Frizi's recommendations.
 
 Photos in the customer profile are private by default unless the customer grants explicit marketing consent.
 

@@ -1,18 +1,18 @@
-# Hairline Stylist App Build Handoff
+# Frizi Pro App Build Handoff
 
 The complete build handoff for the separate stylist/barber app has been mirrored into the stylist project at:
 
-`C:\Users\kathr\Documents\Claude CoWork Files\Projects\Apps\Hairline stylist\CLIENT_APP_HANDOFF.md`
+Frizi Pro project handoff.
 
 This client repo remains the public web app at:
 
-`C:\Users\kathr\Documents\Claude CoWork Files\Projects\Apps\Hairline`
+Frizi Client project.
 
 ## Summary For Client-Side Coordination
 
-Hairline Stylist must be a separate downloaded mobile-first app for professionals. It must provide the profile, availability, CRM, photo, consent, review, promotion, and relocation data that powers Hairline Client.
+Frizi Pro must be a separate downloaded mobile-first app for professionals. It must provide the profile, availability, CRM, photo, consent, review, promotion, and relocation data that powers Frizi Client.
 
-Hairline Client expects public professional records with:
+Frizi Client expects public professional records with:
 
 - Profile identity.
 - Current work location.
@@ -27,7 +27,7 @@ Hairline Client expects public professional records with:
 - Current promotions.
 - Consent state for public/marketing assets.
 
-Hairline Client sends or creates:
+Frizi Client sends or creates:
 
 - Booking requests.
 - Natural-language client hair descriptions.

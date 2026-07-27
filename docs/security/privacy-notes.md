@@ -1,6 +1,6 @@
 # Privacy Notes
 
-Hairline may eventually handle client contact details, appointment records, staff information, customer hair history, photos, reviews, identity-related comfort filters, and business data. Treat those as private by default when data models and integrations are introduced.
+Frizi may eventually handle client contact details, appointment records, staff information, customer hair history, photos, reviews, identity-related comfort filters, and business data. Treat those as private by default when data models and integrations are introduced.
 
 ## Sensitive Data Categories
 
