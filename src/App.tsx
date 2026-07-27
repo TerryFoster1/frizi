@@ -222,6 +222,129 @@ const professionals: Professional[] = [
     promotion: 'New clients get 10% off a fade and beard combo this week.',
   },
   {
+    id: 'layla',
+    name: 'Layla Brooks',
+    role: 'Inclusive barber and fade specialist',
+    studio: 'East Room Barber',
+    neighborhood: 'Leslieville',
+    distance: '2.1 km',
+    heroImage:
+      'https://images.unsplash.com/photo-1592647420148-bfcc177e2117?auto=format&fit=crop&w=1200&q=85',
+    detailImage:
+      'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=900&q=85',
+    rating: 4.95,
+    reviews: 176,
+    repeatRate: '81%',
+    nextAvailable: 'Today 6:00 PM',
+    specialties: ['Skin fades', 'Drop fades', 'Scissor-over-comb', 'Curly taper cuts'],
+    accommodations: ['Muslim friendly', 'Women-friendly barbering', 'Private room on request', 'Quiet appointment'],
+    searchTerms: ['muslim', 'friendly', 'barber', 'fade', 'fades', 'women', 'private', 'curly taper', 'near me'],
+    whyMatch:
+      'Strong match for clients who want a Muslim-friendly barber, clean fades, and a calm private-room option.',
+    bio: 'Layla works with clients who want barber-level fades in a respectful, low-pressure space. She keeps notes on guard lengths, neckline shape, product preferences, and privacy needs.',
+    services: [
+      { name: 'Skin fade', duration: '50 min', price: '$58' },
+      { name: 'Fade and curl taper', duration: '65 min', price: '$74' },
+      { name: 'Private-room cut', duration: '60 min', price: '$68' },
+    ],
+    bookingSlots: ['Today 6:00 PM', 'Tomorrow 1:15 PM', 'Thu 5:30 PM', 'Sat 10:00 AM'],
+    clientReviews: [
+      {
+        name: 'Amina',
+        rating: 5,
+        text: 'Layla made the private-room request feel normal and gave me the clean taper I wanted.',
+      },
+      {
+        name: 'Noah',
+        rating: 5,
+        text: 'She remembered the exact guard blend from my last cut and fixed the weight on top.',
+      },
+    ],
+    promotion: 'First fade appointment includes a complimentary neckline cleanup within 10 days.',
+  },
+  {
+    id: 'malik',
+    name: 'Malik Stone',
+    role: 'Fade, lineup, and textured cut barber',
+    studio: 'Block 9 Grooming',
+    neighborhood: 'Dundas West',
+    distance: '3.4 km',
+    heroImage:
+      'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=1200&q=85',
+    detailImage:
+      'https://images.unsplash.com/photo-1622286346003-cbc8b8e30a58?auto=format&fit=crop&w=900&q=85',
+    rating: 4.92,
+    reviews: 264,
+    repeatRate: '86%',
+    nextAvailable: 'Tomorrow 9:45 AM',
+    specialties: ['Mid fades', 'Burst fades', 'Beard shaping', 'Textured tops'],
+    accommodations: ['Muslim friendly', 'Prayer-time aware', 'Fragrance aware', 'Same-day booking'],
+    searchTerms: ['muslim', 'barber', 'fade', 'fades', 'beard', 'lineup', 'men', 'textured', 'near me'],
+    whyMatch:
+      'Great option for fade searches with beard work, textured tops, and appointment notes that carry forward.',
+    bio: 'Malik specializes in sharp fades that still grow out cleanly. He documents blend height, neckline preference, beard shape, and styling product tolerance for repeat bookings.',
+    services: [
+      { name: 'Fade and lineup', duration: '45 min', price: '$50' },
+      { name: 'Fade and beard shape', duration: '65 min', price: '$76' },
+      { name: 'Textured crop cut', duration: '55 min', price: '$62' },
+    ],
+    bookingSlots: ['Tomorrow 9:45 AM', 'Tomorrow 6:30 PM', 'Fri 12:30 PM', 'Sun 11:00 AM'],
+    clientReviews: [
+      {
+        name: 'Bilal',
+        rating: 5,
+        text: 'The fade was sharp without going too high, and the beard line stayed natural.',
+      },
+      {
+        name: 'Andre',
+        rating: 5,
+        text: 'Malik actually used my old photo notes and matched the cut better than I expected.',
+      },
+    ],
+    promotion: 'Book a fade and beard shape together and get $8 off this week.',
+  },
+  {
+    id: 'serena',
+    name: 'Serena Vale',
+    role: 'Short cuts, fades, and gender-neutral barbering',
+    studio: 'Vale Chair',
+    neighborhood: 'Kensington Market',
+    distance: '4.2 km',
+    heroImage:
+      'https://images.unsplash.com/photo-1562004760-aceed7bb0fe3?auto=format&fit=crop&w=1200&q=85',
+    detailImage:
+      'https://images.unsplash.com/photo-1544717301-9cdcb1f5940f?auto=format&fit=crop&w=900&q=85',
+    rating: 4.9,
+    reviews: 119,
+    repeatRate: '74%',
+    nextAvailable: 'Friday 4:15 PM',
+    specialties: ['Soft fades', 'Short cuts', 'Gender-neutral cuts', 'Low-maintenance texture'],
+    accommodations: ['Queer friendly', 'Muslim friendly', 'Consult-first cuts', 'Quiet appointment'],
+    searchTerms: ['muslim', 'friendly', 'barber', 'fade', 'fades', 'short cuts', 'quiet', 'gender neutral', 'near me'],
+    whyMatch:
+      'Good match for clients who want a softer fade, a consult-first appointment, and a comfortable inclusive chair.',
+    bio: 'Serena blends barbering and salon cutting for clients who want short shapes that feel intentional, not rushed. She is especially good with soft fades, grow-out plans, and reference photos.',
+    services: [
+      { name: 'Soft fade', duration: '55 min', price: '$60' },
+      { name: 'Short cut reset', duration: '70 min', price: '$82' },
+      { name: 'Consult and cut', duration: '75 min', price: '$88' },
+    ],
+    bookingSlots: ['Friday 4:15 PM', 'Sat 1:00 PM', 'Mon 10:45 AM', 'Tue 2:30 PM'],
+    clientReviews: [
+      {
+        name: 'Riley',
+        rating: 5,
+        text: 'Serena listened first and gave me a fade that felt like me, not a template.',
+      },
+      {
+        name: 'Hana',
+        rating: 5,
+        text: 'The appointment was quiet and easy, and she saved exactly what to repeat next time.',
+      },
+    ],
+    promotion: 'New clients can add a 15-minute shape consult at no extra charge.',
+  },
+  {
     id: 'mara',
     name: 'Mara Chen',
     role: 'Curl cutter and colorist',
