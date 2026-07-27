@@ -1294,6 +1294,10 @@ function ProfileDetails({
   setSelectedTime: (value: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'reviews'>('overview');
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [servicesOpen, setServicesOpen] = useState(false);
+  const availabilityDays = useMemo(() => buildAvailabilityDays(profile.bookingSlots), [profile.bookingSlots]);
+  const selectedDay = availabilityDays.find((day) => day.times.includes(selectedTime)) || availabilityDays[0];
 
   return (
     <section className="min-h-screen bg-[#080808] pb-28" id="booking">
@@ -1339,22 +1343,28 @@ function ProfileDetails({
             </div>
           </div>
           <p className="mt-5 text-base leading-7 text-white/72">{profile.bio}</p>
-          <div className="mt-5 grid grid-cols-3 gap-2 text-center">
-            <InfoTile label="Rating" value={`${profile.rating}`} />
-            <InfoTile label="Reviews" value={`${profile.reviews}`} />
-            <InfoTile label="Distance" value={profile.distance} />
-          </div>
         </div>
 
-        <Panel title="Current Promotion">
+        <div className="rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
+          <p className="text-lg font-black text-[#f4c430]">{profile.promotion}</p>
+          <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button">
+            <Send size={18} />
+            Save promo to my account
+          </button>
+        </div>
+
+        {activeTab === 'overview' ? (
           <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-            <p className="text-lg font-black text-[#f4c430]">{profile.promotion}</p>
-            <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black" type="button">
-              <Send size={18} />
-              Save promo to my account
+            <button
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
+              type="button"
+              onClick={() => setBookingOpen((current) => !current)}
+            >
+              <CalendarDays size={20} />
+              Book with stylist
             </button>
           </div>
-        </Panel>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-white/10 bg-[#151519] p-2">
           {(['overview', 'reviews'] as const).map((tab) => (
@@ -1369,30 +1379,63 @@ function ProfileDetails({
           ))}
         </div>
 
-        {activeTab === 'overview' ? (
-          <Panel title="Book with stylist">
-            <div className="space-y-2">
-              {profile.services.map((service) => (
+        {activeTab === 'overview' && bookingOpen ? (
+          <div className="space-y-4 rounded-[28px] border border-white/10 bg-[#151519] p-5">
+            <button
+              className="flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-left"
+              type="button"
+              onClick={() => setServicesOpen((current) => !current)}
+            >
+              <span>
+                <span className="block text-sm font-black text-white">Service</span>
+                <span className="block text-sm font-semibold text-white/58">{selectedService || profile.services[0].name}</span>
+              </span>
+              <ChevronDown className={`text-[#f4c430] transition-transform ${servicesOpen ? 'rotate-180' : ''}`} size={20} />
+            </button>
+            {servicesOpen ? (
+              <div className="space-y-2">
+                {profile.services.map((service) => (
+                  <button
+                    key={service.name}
+                    className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
+                      selectedService === service.name
+                        ? 'border-[#f4c430] bg-[#f4c430]/12'
+                        : 'border-white/10 bg-white/[0.04]'
+                    }`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedService(service.name);
+                      setServicesOpen(false);
+                    }}
+                  >
+                    <span>
+                      <span className="block font-black">{service.name}</span>
+                      <span className="text-sm font-semibold text-white/52">{service.duration}</span>
+                    </span>
+                    <span className="text-lg font-black text-[#f4c430]">{service.price}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="grid grid-cols-4 gap-2">
+              {availabilityDays.map((day) => (
                 <button
-                  key={service.name}
-                  className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
-                    selectedService === service.name
-                      ? 'border-[#f4c430] bg-[#f4c430]/12'
-                      : 'border-white/10 bg-white/[0.04]'
+                  key={day.label}
+                  className={`min-h-20 rounded-2xl border px-2 py-3 text-center ${
+                    selectedDay.label === day.label ? 'border-[#f4c430] bg-[#f4c430] text-black' : 'border-white/10 bg-white/[0.04] text-white'
                   }`}
                   type="button"
-                  onClick={() => setSelectedService(service.name)}
+                  onClick={() => setSelectedTime(day.times[0])}
                 >
-                  <span>
-                    <span className="block font-black">{service.name}</span>
-                    <span className="text-sm font-semibold text-white/52">{service.duration}</span>
-                  </span>
-                  <span className="text-lg font-black text-[#f4c430]">{service.price}</span>
+                  <span className="block text-xs font-black uppercase">{day.weekday}</span>
+                  <span className="mt-1 block text-2xl font-black">{day.dayNumber}</span>
+                  <span className={`mx-auto mt-1 block h-1.5 w-1.5 rounded-full ${selectedDay.label === day.label ? 'bg-black' : 'bg-[#f4c430]'}`} />
                 </button>
               ))}
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              {profile.bookingSlots.map((slot) => (
+            <div className="grid grid-cols-2 gap-2">
+              {selectedDay.times.map((slot) => (
                 <button
                   key={slot}
                   className={`rounded-2xl border px-3 py-4 text-sm font-black ${
@@ -1401,7 +1444,7 @@ function ProfileDetails({
                   type="button"
                   onClick={() => setSelectedTime(slot)}
                 >
-                  {slot}
+                  {formatSlotTime(slot)}
                 </button>
               ))}
             </div>
@@ -1414,7 +1457,7 @@ function ProfileDetails({
               Book with stylist
             </button>
             {booking ? <BookingConfirmation booking={booking} /> : null}
-          </Panel>
+          </div>
         ) : null}
 
         {activeTab === 'reviews' ? (
@@ -1816,6 +1859,63 @@ function formatCurrency(cents: number) {
     style: 'currency',
     currency: 'CAD',
   }).format(cents / 100);
+}
+
+function buildAvailabilityDays(slots: string[]) {
+  const grouped = slots.reduce<Array<{ date: Date; label: string; times: string[]; weekday: string; dayNumber: number }>>(
+    (days, slot) => {
+      const date = dateFromSlot(slot);
+      const label = date.toDateString();
+      const existing = days.find((day) => day.label === label);
+      if (existing) {
+        existing.times.push(slot);
+        return days;
+      }
+
+      days.push({
+        date,
+        label,
+        times: [slot],
+        weekday: date.toLocaleDateString('en-CA', { weekday: 'short' }),
+        dayNumber: date.getDate(),
+      });
+      return days;
+    },
+    [],
+  );
+
+  return grouped.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+function dateFromSlot(slot: string) {
+  const now = new Date();
+  const normalized = slot.toLowerCase();
+  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const explicitDay = dayNames.findIndex((day) => normalized.startsWith(day));
+
+  if (normalized.startsWith('today')) return startOfDay(now);
+  if (normalized.startsWith('tomorrow')) return addDays(startOfDay(now), 1);
+  if (explicitDay >= 0) {
+    const today = startOfDay(now);
+    const offset = (explicitDay - today.getDay() + 7) % 7 || 7;
+    return addDays(today, offset);
+  }
+
+  return startOfDay(now);
+}
+
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function formatSlotTime(slot: string) {
+  return slot.replace(/^(today|tomorrow|mon|tue|wed|thu|fri|sat|sun)\s+/i, '');
 }
 
 function rankProfessionals(query: string, filters: FilterState) {
