@@ -75,6 +75,14 @@ type InvitationFixture = {
   };
 };
 
+type InfoPage = {
+  title: string;
+  eyebrow: string;
+  summary: string;
+  points: string[];
+  cta?: { label: string; href: string };
+};
+
 const sampleQuery =
   'I am looking for a muslim friendly barber near me who is good at fades.';
 
@@ -278,8 +286,110 @@ const professionals: Professional[] = [
   },
 ];
 
+const infoPages: Record<string, InfoPage> = {
+  'help/payments': {
+    eyebrow: 'Help',
+    title: 'Payments and payouts',
+    summary:
+      'Frizi is being set up for Stripe Connect so clients can pay for bookings and products in-app while professionals receive payouts through the platform.',
+    points: [
+      'Frizi Pro is modeled as a $29/month subscription for professionals.',
+      'Online service and product payments carry a 4.5% platform transaction fee in the demo model.',
+      'Service payments can use Stripe Connect destination charges with the professional as the connected account and Frizi collecting the application fee.',
+      'Standard payouts are planned weekly. Instant payout can be offered as an optional faster transfer with an added 2% fee where Stripe eligibility allows it.',
+      'Live processing requires Stripe secret keys, webhook signing secret, Connect onboarding, and production business verification before real client cards are charged.',
+    ],
+    cta: { label: 'View terms', href: '/policies/terms' },
+  },
+  'help/fulfillment': {
+    eyebrow: 'Help',
+    title: 'Product fulfillment',
+    summary:
+      'Frizi product sales are designed so clients buy from Frizi inside the app. Supplier and wholesale details stay in the admin catalogue, not on the client checkout screen.',
+    points: [
+      'Frizi should act as seller of record for in-app product orders and show Frizi on customer receipts, order updates, support, returns, and packing materials where possible.',
+      'The admin catalogue stores source URL, internal cost, retail price, supplier, SKU, fulfillment method, tags, and stylist commission.',
+      'For MVP fulfillment, start with manually reviewed orders and supplier placement before automating with Amazon MCF, wholesale distributors, or a 3PL.',
+      'Use supplier agreements that allow blind or marketplace fulfillment, especially if Amazon inventory is used behind the scenes.',
+      'Do not route clients to visible Amazon affiliate checkout if the goal is Frizi-owned checkout and Frizi transaction fees.',
+    ],
+    cta: { label: 'Open admin catalogue', href: 'https://admin.frizi.ca' },
+  },
+  'policies/terms': {
+    eyebrow: 'Policy',
+    title: 'Terms of service',
+    summary:
+      'These demo terms explain the basic roles in Frizi: clients book and buy through Frizi, professionals manage services and CRM, and Frizi operates the software and payment rails.',
+    points: [
+      'Clients are responsible for entering accurate booking, contact, hair profile, delivery, and payment information.',
+      'Professionals are responsible for service descriptions, availability, appointment quality, cancellation handling, and any client-facing claims they publish.',
+      'Frizi may collect subscription fees, transaction fees, product margins, and other disclosed fees for use of the platform.',
+      'Product prices, availability, and delivery windows can change before checkout is confirmed.',
+      'These demo policies need legal review before production launch.',
+    ],
+    cta: { label: 'Privacy policy', href: '/policies/privacy' },
+  },
+  'policies/privacy': {
+    eyebrow: 'Policy',
+    title: 'Privacy policy',
+    summary:
+      'Frizi handles sensitive client profile details, hair photos, reviews, booking notes, and payment metadata, so the policy is written around consent and minimum necessary access.',
+    points: [
+      'Hair photos are private by default and are shared with a professional only for booking, consultation, service history, or client-approved portfolio use.',
+      'Marketing use of client photos or reviews requires explicit, asset-specific consent that can be revoked.',
+      'Payment card details should be processed by Stripe and not stored directly by Frizi.',
+      'Professionals can view CRM details needed for appointments and client relationship management.',
+      'Production launch should include data retention, deletion, breach notification, and regional privacy compliance review.',
+    ],
+    cta: { label: 'Return policy', href: '/policies/returns' },
+  },
+  'policies/shipping': {
+    eyebrow: 'Policy',
+    title: 'Shipping policy',
+    summary:
+      'Frizi product orders are intended to ship from approved suppliers, wholesalers, Amazon MCF, or 3PL partners while the client sees Frizi as the store experience.',
+    points: [
+      'Shipping cost, carrier, and delivery estimate should be shown before checkout is completed.',
+      'Supplier identity may be internal, but client-facing tracking, support, and order updates should come from Frizi.',
+      'Some products may be unavailable for certain provinces, states, addresses, or delivery speeds.',
+      'Orders should not be marked shipped until supplier confirmation or tracking is available.',
+      'Production fulfillment needs inventory, tax, and restricted-product review before launch.',
+    ],
+    cta: { label: 'Fulfillment help', href: '/help/fulfillment' },
+  },
+  'policies/returns': {
+    eyebrow: 'Policy',
+    title: 'Returns and refunds',
+    summary:
+      'This demo policy separates service payments from product orders and keeps client support routed through Frizi.',
+    points: [
+      'Appointment cancellation and refund rules should be shown before the client pays.',
+      'Unopened eligible products can be reviewed for return within the displayed return window.',
+      'Opened personal-care products may be final sale unless damaged, incorrect, or required by applicable law.',
+      'Product refunds should account for supplier return rules, shipping status, and stylist commission reversal when applicable.',
+      'Chargebacks, disputes, and refunds must be reconciled against Stripe events before payout finalization.',
+    ],
+    cta: { label: 'Payments help', href: '/help/payments' },
+  },
+  'policies/marketplace': {
+    eyebrow: 'Policy',
+    title: 'Marketplace policy',
+    summary:
+      'Frizi connects clients with independent professionals while also selling selected products through an admin-managed catalogue.',
+    points: [
+      'Professionals keep their reviews, photos, CRM notes, and client relationships portable inside Frizi.',
+      'Client reviews and photos should only be public when approved under the correct consent state.',
+      'Professional service payouts, product commissions, refunds, and adjustments should be calculated from Stripe/order records.',
+      'Frizi can remove products, promotions, or profile content that is misleading, unsafe, noncompliant, or unsupported by evidence.',
+      'The admin product catalogue is separate from the pro and client apps so product sourcing can change without app releases.',
+    ],
+    cta: { label: 'Open Frizi', href: '/' },
+  },
+};
+
 function App() {
   const inviteToken = window.location.pathname.match(/^\/invite\/([^/?#]+)/)?.[1];
+  const infoPageMatch = window.location.pathname.match(/^\/(help|policies)\/([^/?#]+)/);
   const [query, setQuery] = useState(sampleQuery);
   const [submittedQuery, setSubmittedQuery] = useState(sampleQuery);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -294,6 +404,11 @@ function App() {
   const activeProfile = rankedProfiles[activeIndex % rankedProfiles.length];
   const activeService = selectedService || activeProfile.services[0].name;
   const activeTime = selectedTime || activeProfile.bookingSlots[0];
+
+  if (infoPageMatch) {
+    const pageKey = `${infoPageMatch[1]}/${infoPageMatch[2]}`;
+    return <InfoPageView page={infoPages[pageKey]} />;
+  }
 
   if (inviteToken) {
     const invitation = invitationFixtures.find((fixture) => fixture.token === inviteToken);
@@ -402,6 +517,50 @@ function App() {
             setSelectedTime={setSelectedTime}
           />
         </div>
+      </section>
+    </main>
+  );
+}
+
+function InfoPageView({ page }: { page?: InfoPage }) {
+  const activePage = page ?? {
+    eyebrow: 'Frizi',
+    title: 'Page not found',
+    summary: 'This Frizi help or policy page is not available yet.',
+    points: ['Open the app or choose one of the published help links.'],
+    cta: { label: 'Open Frizi', href: '/' },
+  };
+
+  return (
+    <main className="min-h-screen bg-[#080808] px-4 py-6 text-white">
+      <section className="mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-white/[0.05] p-5 shadow-2xl shadow-black/35 sm:p-8">
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="text-[#f4c430]" size={30} />
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[#f4c430]">{activePage.eyebrow}</p>
+        </div>
+        <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">{activePage.title}</h1>
+        <p className="mt-4 text-lg leading-8 text-white/72">{activePage.summary}</p>
+        <div className="mt-6 grid gap-3">
+          {activePage.points.map((point) => (
+            <div key={point} className="flex gap-3 rounded-2xl border border-white/10 bg-black/30 p-4">
+              <CheckCircle2 className="mt-1 shrink-0 text-[#f4c430]" size={18} />
+              <p className="leading-7 text-white/82">{point}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 flex flex-wrap gap-3">
+          {activePage.cta ? (
+            <a className="rounded-2xl bg-[#f4c430] px-5 py-4 text-center font-black text-black" href={activePage.cta.href}>
+              {activePage.cta.label}
+            </a>
+          ) : null}
+          <a className="rounded-2xl border border-white/15 px-5 py-4 text-center font-black text-white" href="/">
+            Back to Frizi
+          </a>
+        </div>
+        <p className="mt-6 text-sm leading-6 text-white/45">
+          Demo policy draft for product validation. Have counsel review before production launch.
+        </p>
       </section>
     </main>
   );

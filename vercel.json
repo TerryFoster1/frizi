@@ -6,6 +6,14 @@
     {
       "source": "/invite/:token",
       "destination": "/index.html"
+    },
+    {
+      "source": "/help/:slug",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/policies/:slug",
+      "destination": "/index.html"
     }
   ]
 }
