@@ -856,29 +856,29 @@ function App() {
               deck={
                 <DeckCard
                   activeIndex={activeIndex}
+                  isListening={isListening}
                   isSaved={savedIds.includes(activeProfile.id)}
+                  onMic={startVoiceSearch}
                   onNext={() => moveDeck('next')}
+                  onSearch={submitSearch}
                   onPrevious={() => moveDeck('previous')}
                   onToggleSaved={() => toggleSaved(activeProfile.id)}
                   profile={activeProfile}
+                  query={query}
+                  setQuery={setQuery}
                   total={rankedProfiles.length}
+                  voiceMessage={voiceMessage}
                 />
               }
               details={
               <ProfileDetails
                 booking={booking}
-                isListening={isListening}
-                onMic={startVoiceSearch}
                 onBook={confirmBooking}
-                onSearch={submitSearch}
                 profile={activeProfile}
-                query={query}
                 selectedService={activeService}
                 selectedTime={activeTime}
-                setQuery={setQuery}
                 setSelectedService={setSelectedService}
                 setSelectedTime={setSelectedTime}
-                voiceMessage={voiceMessage}
               />
               }
             />
@@ -1407,22 +1407,84 @@ function ResultsExperience({ deck, details }: { deck: ReactNode; details: ReactN
   );
 }
 
+function ResultsSearchPill({
+  isListening,
+  onMic,
+  onSearch,
+  query,
+  setQuery,
+  voiceMessage,
+}: {
+  isListening: boolean;
+  onMic: () => void;
+  onSearch: () => void;
+  query: string;
+  setQuery: (value: string) => void;
+  voiceMessage: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-white/16 bg-black/58 p-2 shadow-2xl shadow-black/45 backdrop-blur-xl">
+      <div className="flex items-center gap-2 rounded-[18px] border border-white/10 bg-white/10 px-3 py-2">
+        <Search className="shrink-0 text-[#f4c430]" size={18} />
+        <input
+          className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/50"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              onSearch();
+            }
+          }}
+          placeholder="I am looking for....."
+        />
+        <button
+          aria-label="Voice search"
+          className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${
+            isListening ? 'bg-[#f4c430] text-black' : 'bg-white/12 text-white'
+          }`}
+          type="button"
+          onClick={onMic}
+        >
+          <Mic size={17} />
+        </button>
+      </div>
+      {isListening || voiceMessage ? (
+        <p className="mt-2 rounded-2xl bg-[#f4c430]/14 px-3 py-2 text-xs font-black text-[#f4c430]">
+          {voiceMessage || 'Listening...'}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function DeckCard({
   activeIndex,
+  isListening,
   isSaved,
+  onMic,
   onNext,
+  onSearch,
   onPrevious,
   onToggleSaved,
   profile,
+  query,
+  setQuery,
   total,
+  voiceMessage,
 }: {
   activeIndex: number;
+  isListening: boolean;
   isSaved: boolean;
+  onMic: () => void;
   onNext: () => void;
+  onSearch: () => void;
   onPrevious: () => void;
   onToggleSaved: () => void;
   profile: Professional;
+  query: string;
+  setQuery: (value: string) => void;
   total: number;
+  voiceMessage: string;
 }) {
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const swipeGesture = useRef<{
@@ -1506,7 +1568,17 @@ function DeckCard({
           src={profile.heroImage}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/8 to-black/82" />
-        <div className="absolute right-4 top-4 z-10 flex items-center gap-3 pt-safe">
+        <div className="absolute left-4 right-4 top-4 z-20 pt-safe">
+          <ResultsSearchPill
+            isListening={isListening}
+            onMic={onMic}
+            onSearch={onSearch}
+            query={query}
+            setQuery={setQuery}
+            voiceMessage={voiceMessage}
+          />
+        </div>
+        <div className="absolute right-4 top-28 z-10 flex items-center gap-3 sm:top-24">
           <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-black text-white/72 backdrop-blur">
             {activeIndex + 1}/{total}
           </span>
@@ -1542,32 +1614,20 @@ function DeckCard({
 
 function ProfileDetails({
   booking,
-  isListening,
-  onMic,
   onBook,
-  onSearch,
   profile,
-  query,
   selectedService,
   selectedTime,
-  setQuery,
   setSelectedService,
   setSelectedTime,
-  voiceMessage,
 }: {
   booking: BookingRequest | null;
-  isListening: boolean;
-  onMic: () => void;
   onBook: () => void;
-  onSearch: () => void;
   profile: Professional;
-  query: string;
   selectedService: string;
   selectedTime: string;
-  setQuery: (value: string) => void;
   setSelectedService: (value: string) => void;
   setSelectedTime: (value: string) => void;
-  voiceMessage: string;
 }) {
   const [showReviews, setShowReviews] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -1596,38 +1656,6 @@ function ProfileDetails({
 
   return (
     <section className="min-h-screen bg-[#080808] pb-28" id="booking">
-      <div className="sticky top-0 z-40 border-b border-white/10 bg-[#080808]/92 px-4 py-3 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3 py-2">
-          <Search className="shrink-0 text-[#f4c430]" size={18} />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/42"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                onSearch();
-              }
-            }}
-            placeholder="I am looking for....."
-          />
-          <button
-            aria-label="Voice search"
-            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${
-              isListening ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
-            }`}
-            type="button"
-            onClick={onMic}
-          >
-            <Mic size={16} />
-          </button>
-        </div>
-        {isListening || voiceMessage ? (
-          <p className="mx-auto mt-2 max-w-5xl rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
-            {voiceMessage || 'Listening...'}
-          </p>
-        ) : null}
-      </div>
-
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-5 sm:px-6">
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
           <div className="flex items-start gap-4">
