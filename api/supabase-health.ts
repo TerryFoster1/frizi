@@ -18,7 +18,7 @@ export default async function handler(request: IncomingMessage, response: Server
     return sendJson(response, 501, {
       configured: false,
       error: 'Supabase is not configured.',
-      requiredEnv: ['VITE_SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY'],
+      requiredEnv: ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'],
     });
   }
 
