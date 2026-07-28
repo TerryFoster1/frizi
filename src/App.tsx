@@ -58,11 +58,36 @@ type Professional = {
 };
 
 type BookingRequest = {
+  professionalId: string;
   professional: string;
   service: string;
+  serviceId: string;
   servicePriceCents: number;
   time: string;
   eventId: string;
+};
+
+type CheckoutSummary = {
+  appointmentId: string;
+  customerId: string;
+  professionalId: string;
+  professionalName: string;
+  salonId: string;
+  salonName: string;
+  services: Array<{ id: string; name: string; priceCents: number; currency: string }>;
+  serviceSubtotalCents: number;
+  promotion: null | { id: string; name: string; code: string; discountType: string; discountValue: number };
+  discountCents: number;
+  discountedServiceSubtotalCents: number;
+  taxCents: number;
+  depositCreditCents: number;
+  tipSelection: string;
+  tipBasisCents: number;
+  tipCents: number;
+  amountDueCents: number;
+  currency: string;
+  quoteExpiresAt: string;
+  tipOptions: Array<{ percent: number; amountCents: number }>;
 };
 
 type TipChoice = 15 | 18 | 20 | 25 | 'custom' | 'none';
@@ -799,11 +824,14 @@ function App() {
 
   function confirmBooking() {
     if (!activeProfile) return;
+    const selectedService = activeProfile.services.find((service) => service.name === activeService) || activeProfile.services[0];
     const eventId = `booking_requested:${activeProfile.id}:${Date.now().toString().slice(-5)}`;
     setBooking({
+      professionalId: activeProfile.id,
       professional: activeProfile.name,
-      service: activeService,
-      servicePriceCents: parseMoneyToCents(activeProfile.services.find((service) => service.name === activeService)?.price || '$0'),
+      service: selectedService.name,
+      serviceId: serviceIdFor(activeProfile.id, selectedService.name),
+      servicePriceCents: parseMoneyToCents(selectedService.price),
       time: activeTime,
       eventId,
     });
@@ -886,6 +914,7 @@ function App() {
               details={
               <ProfileDetails
                 booking={booking}
+                clientSession={clientSession}
                 isClientSignedIn={Boolean(clientSession)}
                 onBook={confirmBooking}
                 onPromoSignupRequired={() => openClientAuth('promo')}
@@ -1021,10 +1050,13 @@ function InviteLanding({
 
   function bookFromInvite() {
     const eventId = `client_booking_completed:${invitingProfessional.id}:${Date.now().toString().slice(-5)}`;
+    const inviteService = invitingProfessional.services[0];
     setBooking({
+      professionalId: invitingProfessional.id,
       professional: invitingProfessional.name,
-      service: invitingProfessional.services[0].name,
-      servicePriceCents: parseMoneyToCents(invitingProfessional.services[0].price),
+      service: inviteService.name,
+      serviceId: serviceIdFor(invitingProfessional.id, inviteService.name),
+      servicePriceCents: parseMoneyToCents(inviteService.price),
       time: invitingProfessional.bookingSlots[0],
       eventId,
     });
@@ -1131,7 +1163,7 @@ function InviteLanding({
             </div>
           ) : null}
 
-          {booking ? <BookingConfirmation booking={booking} /> : null}
+            {booking ? <BookingConfirmation booking={booking} clientSession={{ name: 'Invite Client', email: `${clientKey}@frizi.demo` }} /> : null}
         </section>
       </section>
     </main>
@@ -1638,6 +1670,7 @@ function DeckCard({
 
 function ProfileDetails({
   booking,
+  clientSession,
   isClientSignedIn,
   onBook,
   onBookingAfterAuthHandled,
@@ -1650,6 +1683,7 @@ function ProfileDetails({
   setSelectedTime,
 }: {
   booking: BookingRequest | null;
+  clientSession: ClientSession | null;
   isClientSignedIn: boolean;
   onBook: () => void;
   onBookingAfterAuthHandled: () => void;
@@ -1687,6 +1721,7 @@ function ProfileDetails({
       <BookingCalendarPage
         availabilityDays={availabilityDays}
         booking={booking}
+        clientSession={clientSession}
         onBack={() => setBookingOpen(false)}
         onBook={onBook}
         profile={profile}
@@ -1775,6 +1810,7 @@ function ProfileDetails({
 function BookingCalendarPage({
   availabilityDays,
   booking,
+  clientSession,
   onBack,
   onBook,
   profile,
@@ -1788,6 +1824,7 @@ function BookingCalendarPage({
 }: {
   availabilityDays: ReturnType<typeof buildAvailabilityDays>;
   booking: BookingRequest | null;
+  clientSession: ClientSession | null;
   onBack: () => void;
   onBook: () => void;
   profile: Professional;
@@ -1948,7 +1985,7 @@ function BookingCalendarPage({
             <CalendarDays size={20} />
             Book an appointment
           </button>
-          {booking ? <BookingConfirmation booking={booking} /> : null}
+          {booking ? <BookingConfirmation booking={booking} clientSession={clientSession} /> : null}
         </div>
       </div>
     </section>
@@ -2028,7 +2065,7 @@ function AppointmentsPanel({ booking }: { booking: BookingRequest | null }) {
     <div className="mt-5 space-y-4">
       {booking ? (
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <BookingConfirmation booking={booking} />
+          <BookingConfirmation booking={booking} clientSession={null} />
         </div>
       ) : (
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
@@ -2247,59 +2284,94 @@ function Panel({ children, title }: { children: React.ReactNode; title: string }
   );
 }
 
-function BookingConfirmation({ booking }: { booking: BookingRequest }) {
+function BookingConfirmation({ booking, clientSession }: { booking: BookingRequest; clientSession: ClientSession | null }) {
   const [tipChoice, setTipChoice] = useState<TipChoice>(defaultTipChoice);
   const [customTip, setCustomTip] = useState('');
-  const [paymentComplete, setPaymentComplete] = useState(false);
-  const serviceTotal = booking.servicePriceCents;
-  const taxes = Math.round(serviceTotal * taxRate);
-  const tipAmount =
-    tipChoice === 'none'
-      ? 0
-      : tipChoice === 'custom'
-        ? Math.max(0, parseMoneyToCents(customTip))
-        : Math.round(serviceTotal * (tipChoice / 100));
-  const finalTotal = serviceTotal + taxes + tipAmount;
-  const receiptId = `frizi_rcpt_${booking.eventId.split(':').pop()}`;
+  const [promoCodeDraft, setPromoCodeDraft] = useState('');
+  const [appliedPromoCode, setAppliedPromoCode] = useState('');
+  const [summary, setSummary] = useState<CheckoutSummary | null>(null);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const customerEmail = clientSession?.email || 'guest@frizi.demo';
+  const customerId = customerIdFor(customerEmail);
 
-  if (paymentComplete) {
-    return (
-      <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4">
-        <p className="flex items-center gap-2 text-xl font-black text-emerald-300">
-          <CheckCircle2 size={22} />
-          Payment Successful
-        </p>
-        <p className="mt-2 text-sm leading-6 text-white/74">
-          Thanks for booking with {booking.professional}. Your receipt is saved to payment history and the pro-side booking record.
-        </p>
-        <div className="mt-4 rounded-2xl bg-black/28 p-4">
-          <p className="mb-3 flex items-center gap-2 font-black text-white">
-            <ReceiptText size={18} className="text-[#f4c430]" />
-            Receipt summary
-          </p>
-          <ReceiptRow label="Service" value={booking.service} />
-          <ReceiptRow label="Appointment" value={booking.time} />
-          <ReceiptRow label="Service total" value={formatCurrency(serviceTotal)} />
-          <ReceiptRow label="Taxes" value={formatCurrency(taxes)} />
-          <ReceiptRow label="Tip" value={formatCurrency(tipAmount)} highlight />
-          <ReceiptRow label="Total paid" value={formatCurrency(finalTotal)} strong />
-          <p className="mt-3 text-xs font-bold text-white/48">Receipt {receiptId}. Tip is stored separately from service revenue for payout and refund reporting.</p>
-        </div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <button className="rounded-2xl bg-white px-3 py-3 text-sm font-black text-black" type="button">
-            Leave a Review
-          </button>
-          <button className="flex items-center justify-center gap-2 rounded-2xl bg-white/10 px-3 py-3 text-sm font-black text-white" type="button">
-            <Camera size={16} />
-            Upload haircut photos
-          </button>
-          <button className="rounded-2xl bg-[#f4c430] px-3 py-3 text-sm font-black text-black" type="button">
-            Book next appointment
-          </button>
-        </div>
-      </div>
-    );
+  const checkoutPayload = useMemo(
+    () => ({
+      kind: 'service_booking',
+      appointmentId: booking.eventId,
+      professionalId: booking.professionalId,
+      customerId,
+      customerEmail,
+      selectedServiceIds: [booking.serviceId],
+      promoCode: appliedPromoCode || undefined,
+      tipSelection: String(tipChoice),
+      customTipAmount: tipChoice === 'custom' ? customTip : undefined,
+      currency: 'cad',
+    }),
+    [appliedPromoCode, booking.eventId, booking.professionalId, booking.serviceId, customTip, customerEmail, customerId, tipChoice],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCheckoutError('');
+
+    async function loadSummary() {
+      try {
+        const response = await fetch('/api/checkout-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(checkoutPayload),
+          signal: controller.signal,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          setSummary(null);
+          setCheckoutError(payload.error || 'Could not calculate checkout.');
+          return;
+        }
+        setSummary(payload.summary);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setCheckoutError(error instanceof Error ? error.message : 'Could not calculate checkout.');
+        }
+      }
+    }
+
+    loadSummary();
+    return () => controller.abort();
+  }, [checkoutPayload]);
+
+  async function startStripeCheckout() {
+    setCheckoutLoading(true);
+    setCheckoutError('');
+    try {
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(checkoutPayload),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setCheckoutError(payload.error || 'Could not start checkout.');
+        return;
+      }
+      if (payload.noCost) {
+        setSummary(payload.summary);
+        setCheckoutError(payload.message || 'No payment is due for this booking.');
+        return;
+      }
+      window.location.href = payload.url;
+    } catch (error) {
+      setCheckoutError(error instanceof Error ? error.message : 'Could not start checkout.');
+    } finally {
+      setCheckoutLoading(false);
+    }
   }
+
+  const displayedTipOptions = summary?.tipOptions ?? [15, 18, 20, 25].map((percent) => ({
+    percent,
+    amountCents: Math.round(booking.servicePriceCents * (percent / 100)),
+  }));
 
   return (
     <div className="mt-4 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 p-4">
@@ -2319,11 +2391,43 @@ function BookingConfirmation({ booking }: { booking: BookingRequest }) {
       <div className="mt-4 rounded-2xl border border-white/10 bg-[#101014] p-4">
         <p className="flex items-center gap-2 text-lg font-black text-white">
           <CreditCard size={19} className="text-[#f4c430]" />
-          Add gratuity before payment
+          Review and pay in Frizi
         </p>
-        <p className="mt-1 text-sm leading-6 text-white/62">Tips are optional and go with the individual professional's earnings history.</p>
+        <p className="mt-1 text-sm leading-6 text-white/62">
+          Frizi recalculates services, discounts, taxes, deposits, and tips on the server before Stripe Checkout opens.
+        </p>
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-white/50" htmlFor="promo-code">
+            Promo code
+          </label>
+          <div className="mt-2 flex gap-2">
+            <input
+              id="promo-code"
+              className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 font-bold text-white outline-none placeholder:text-white/35"
+              placeholder="FIRSTCUT25"
+              value={promoCodeDraft}
+              onChange={(event) => setPromoCodeDraft(event.target.value)}
+            />
+            <button className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-black" type="button" onClick={() => setAppliedPromoCode(promoCodeDraft.trim().toUpperCase())}>
+              Apply
+            </button>
+          </div>
+          {summary?.promotion ? (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#f4c430]/12 px-3 py-2">
+              <p className="text-sm font-black text-[#f4c430]">{summary.promotion.name} applied</p>
+              <button className="text-sm font-black text-white" type="button" onClick={() => {
+                setAppliedPromoCode('');
+                setPromoCodeDraft('');
+              }}>
+                Remove
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <p className="mt-4 text-sm font-black text-white">Optional tip</p>
+        <p className="mt-1 text-sm leading-6 text-white/62">Suggested tips are calculated on the original service subtotal before discounts and tax.</p>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          {[15, 18, 20, 25].map((percent) => (
+          {displayedTipOptions.map(({ percent, amountCents }) => (
             <button
               key={percent}
               className={`rounded-2xl px-3 py-3 text-sm font-black ${
@@ -2332,7 +2436,7 @@ function BookingConfirmation({ booking }: { booking: BookingRequest }) {
               type="button"
               onClick={() => setTipChoice(percent as TipChoice)}
             >
-              {percent}%
+              {percent}% <span className="block text-xs opacity-75">{formatCurrency(amountCents)}</span>
             </button>
           ))}
           <button
@@ -2367,17 +2471,27 @@ function BookingConfirmation({ booking }: { booking: BookingRequest }) {
           </label>
         ) : null}
         <div className="mt-4 rounded-2xl bg-black/28 p-4">
-          <ReceiptRow label="Service Total" value={formatCurrency(serviceTotal)} />
-          <ReceiptRow label="Taxes" value={formatCurrency(taxes)} />
-          <ReceiptRow label="Optional Tip" value={formatCurrency(tipAmount)} highlight />
-          <ReceiptRow label="Final Total" value={formatCurrency(finalTotal)} strong />
+          <p className="mb-3 flex items-center gap-2 font-black text-white">
+            <ReceiptText size={18} className="text-[#f4c430]" />
+            Checkout summary
+          </p>
+          <ReceiptRow label="Service subtotal" value={formatCurrency(summary?.serviceSubtotalCents ?? booking.servicePriceCents)} />
+          {summary?.promotion ? <ReceiptRow label={`${summary.promotion.name} - ${summary.promotion.discountValue}%`} value={`-${formatCurrency(summary.discountCents)}`} highlight /> : null}
+          <ReceiptRow label="Discounted service subtotal" value={formatCurrency(summary?.discountedServiceSubtotalCents ?? booking.servicePriceCents)} />
+          <ReceiptRow label="Tax" value={formatCurrency(summary?.taxCents ?? 0)} />
+          {(summary?.depositCreditCents ?? 0) > 0 ? <ReceiptRow label="Deposit already paid" value={`-${formatCurrency(summary?.depositCreditCents ?? 0)}`} /> : null}
+          <ReceiptRow label="Optional tip" value={formatCurrency(summary?.tipCents ?? 0)} highlight />
+          <ReceiptRow label="Amount due now" value={formatCurrency(summary?.amountDueCents ?? booking.servicePriceCents)} strong />
+          {summary ? <p className="mt-3 text-xs font-bold text-white/48">Quote expires {new Date(summary.quoteExpiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Payment is finalized by Stripe webhook, not the browser redirect.</p> : null}
         </div>
+        {checkoutError ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{checkoutError}</p> : null}
         <button
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
           type="button"
-          onClick={() => setPaymentComplete(true)}
+          onClick={startStripeCheckout}
+          disabled={checkoutLoading || !summary}
         >
-          Confirm payment
+          {checkoutLoading ? 'Opening Stripe...' : 'Continue to secure payment'}
           <ChevronRight size={18} />
         </button>
       </div>
@@ -2407,6 +2521,21 @@ function ReceiptRow({
 function parseMoneyToCents(value: string) {
   const parsed = Number(value.replace(/[^0-9.]/g, ''));
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+}
+
+function serviceIdFor(professionalId: string, serviceName: string) {
+  return `${professionalId}:${slug(serviceName)}`;
+}
+
+function customerIdFor(email: string) {
+  return `client_${slug(email || 'guest')}`;
+}
+
+function slug(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 function formatCurrency(cents: number) {

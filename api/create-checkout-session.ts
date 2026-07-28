@@ -1,25 +1,29 @@
+/// <reference types="node" />
+
 import Stripe from 'stripe';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  calculateAppointmentCheckout,
+  createCheckoutLineItems,
+  metadataFromSummary,
+  platformFeeRate,
+} from './_frizi-pricing.mjs';
 
 type CheckoutKind = 'pro_subscription' | 'service_booking' | 'product_purchase';
 
 type CheckoutRequest = {
   kind?: CheckoutKind;
-  amountCents?: number;
-  serviceAmountCents?: number;
-  taxCents?: number;
-  tipCents?: number;
-  tipSelection?: '15' | '18' | '20' | '25' | 'custom' | 'none';
-  currency?: string;
-  connectedAccountId?: string;
+  appointmentId?: string;
+  professionalId?: string;
+  customerId?: string;
   customerEmail?: string;
-  productName?: string;
-  professionalName?: string;
-  stylistCommissionCents?: number;
+  selectedServiceId?: string;
+  selectedServiceIds?: string[];
+  promoCode?: string;
+  tipSelection?: '15' | '18' | '20' | '25' | 'custom' | 'none';
+  customTipAmount?: string;
+  currency?: string;
 };
-
-const platformFeeRate = Number(process.env.FRIZI_PLATFORM_FEE_RATE || '0.045');
-const instantPayoutFeeRate = Number(process.env.FRIZI_INSTANT_PAYOUT_FEE_RATE || '0.02');
 
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
   response.statusCode = status;
@@ -53,103 +57,66 @@ export default async function handler(request: IncomingMessage & { body?: unknow
   if (!process.env.STRIPE_SECRET_KEY) {
     return sendJson(response, 501, {
       error: 'Stripe is not configured yet.',
-      requiredEnv: [
-        'STRIPE_SECRET_KEY',
-        'STRIPE_WEBHOOK_SECRET',
-        'FRIZI_PUBLIC_APP_URL',
-        'FRIZI_PRO_MONTHLY_PRICE_ID',
-      ],
+      requiredEnv: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'FRIZI_PUBLIC_APP_URL'],
     });
   }
 
   const payload = await readJson(request);
   const kind = payload.kind || 'service_booking';
-  const serviceAmountCents = Math.max(100, Math.round(payload.serviceAmountCents ?? payload.amountCents ?? 11500));
-  const taxCents = Math.max(0, Math.round(payload.taxCents || 0));
-  const tipCents = Math.max(0, Math.round(payload.tipCents || 0));
-  const amountCents = Math.max(100, Math.round(payload.amountCents || serviceAmountCents + taxCents + tipCents));
-  const currency = (payload.currency || 'cad').toLowerCase();
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
     apiVersion: '2026-06-24.dahlia',
   });
   const baseUrl = getBaseUrl(request);
 
-  const metadata = {
-    frizi_checkout_kind: kind,
-    professional_name: payload.professionalName || 'Mara Chen',
-    service_amount_cents: String(serviceAmountCents),
-    tax_cents: String(taxCents),
-    tip_cents: String(tipCents),
-    tip_selection: payload.tipSelection || (tipCents > 0 ? 'custom' : 'none'),
-    revenue_excluding_tips_cents: String(serviceAmountCents + taxCents),
-    revenue_including_tips_cents: String(amountCents),
-    platform_fee_rate: platformFeeRate.toString(),
-    instant_payout_fee_rate: instantPayoutFeeRate.toString(),
-    stylist_commission_cents: String(payload.stylistCommissionCents || 0),
-  };
+  if (kind !== 'service_booking') {
+    return sendJson(response, 400, {
+      error: 'This endpoint now supports dynamic Frizi appointment payments only. Pro subscriptions remain in the Frizi Pro project.',
+    });
+  }
 
-  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
-    kind === 'pro_subscription' && process.env.FRIZI_PRO_MONTHLY_PRICE_ID
-      ? [{ price: process.env.FRIZI_PRO_MONTHLY_PRICE_ID, quantity: 1 }]
-      : [
-        {
-          price_data: {
-            currency,
-            product_data: {
-              name:
-                payload.productName ||
-                (kind === 'product_purchase' ? 'Frizi professional product order' : 'Frizi appointment payment'),
-            },
-            recurring: kind === 'pro_subscription' ? { interval: 'month' as const } : undefined,
-            unit_amount: kind === 'pro_subscription' ? 2900 : serviceAmountCents,
-          },
-          quantity: 1,
-        },
-        ...(taxCents > 0
-          ? [
-              {
-                price_data: {
-                  currency,
-                  product_data: { name: 'Taxes' },
-                  unit_amount: taxCents,
-                },
-                quantity: 1,
-              },
-            ]
-          : []),
-        ...(tipCents > 0
-          ? [
-              {
-                price_data: {
-                  currency,
-                  product_data: { name: `Optional tip for ${payload.professionalName || 'your professional'}` },
-                  unit_amount: tipCents,
-                },
-                quantity: 1,
-              },
-            ]
-          : []),
-      ];
+  let summary;
+  try {
+    summary = calculateAppointmentCheckout(payload);
+  } catch (error) {
+    return sendJson(response, 400, { error: error instanceof Error ? error.message : 'Could not calculate checkout.' });
+  }
 
+  if (summary.amountDueCents <= 0) {
+    return sendJson(response, 200, {
+      noCost: true,
+      summary,
+      message: 'No payment is due. Frizi can complete this appointment without creating a Stripe Checkout Session.',
+    });
+  }
+
+  const metadata = metadataFromSummary(summary);
   const sessionParams: Stripe.Checkout.SessionCreateParams = {
-    mode: kind === 'pro_subscription' ? 'subscription' : 'payment',
+    mode: 'payment',
     customer_email: payload.customerEmail,
-    line_items: lineItems,
+    line_items: createCheckoutLineItems(summary),
     success_url: `${baseUrl}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/?checkout=cancelled`,
     metadata,
+    payment_intent_data: {
+      metadata,
+      ...(summary.connectedAccountId
+        ? {
+            application_fee_amount: Math.round(summary.amountDueCents * platformFeeRate),
+            transfer_data: {
+              destination: summary.connectedAccountId,
+            },
+          }
+        : {}),
+    },
   };
 
-  if (kind === 'service_booking' && payload.connectedAccountId) {
-    sessionParams.payment_intent_data = {
-      application_fee_amount: Math.round(amountCents * platformFeeRate),
-      transfer_data: {
-        destination: payload.connectedAccountId,
-      },
-      metadata,
-    };
-  }
+  const session = await stripe.checkout.sessions.create(sessionParams, {
+    idempotencyKey: `frizi_checkout_${summary.idempotencyKey}`,
+  });
 
-  const session = await stripe.checkout.sessions.create(sessionParams);
-  return sendJson(response, 200, { url: session.url, id: session.id });
+  return sendJson(response, 200, {
+    url: session.url,
+    id: session.id,
+    summary,
+  });
 }

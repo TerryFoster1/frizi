@@ -1,5 +1,9 @@
+/// <reference types="node" />
+
 import Stripe from 'stripe';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+
+const processedEventIds = new Set<string>();
 
 export const config = {
   api: {
@@ -49,25 +53,68 @@ export default async function handler(request: IncomingMessage, response: Server
 
   switch (event.type) {
     case 'checkout.session.completed': {
+      if (processedEventIds.has(event.id)) {
+        return sendJson(response, 200, { received: true, duplicate: true });
+      }
+      processedEventIds.add(event.id);
       const session = event.data.object as Stripe.Checkout.Session;
       console.info('[frizi-payments] checkout completed', {
         id: session.id,
         kind: session.metadata?.frizi_checkout_kind,
-        professional: session.metadata?.professional_name,
-        serviceAmountCents: session.metadata?.service_amount_cents,
-        taxCents: session.metadata?.tax_cents,
-        tipCents: session.metadata?.tip_cents,
-        revenueExcludingTipsCents: session.metadata?.revenue_excluding_tips_cents,
-        revenueIncludingTipsCents: session.metadata?.revenue_including_tips_cents,
+        appointmentId: session.metadata?.appointment_id,
+        customerId: session.metadata?.customer_id,
+        stylistId: session.metadata?.stylist_id,
+        salonId: session.metadata?.salon_id,
+        promotionId: session.metadata?.promotion_id,
+        promotionRedemptionId: session.metadata?.promotion_redemption_id,
+        serviceSubtotalCents: session.metadata?.service_subtotal,
+        discountCents: session.metadata?.discount_amount,
+        taxCents: session.metadata?.tax_amount,
+        tipCents: session.metadata?.tip_amount,
+        amountDueCents: session.metadata?.amount_due,
+        pricingSnapshotHash: session.metadata?.pricing_snapshot_hash,
+        paymentStatus: session.payment_status,
+      });
+      break;
+    }
+    case 'checkout.session.expired': {
+      const session = event.data.object as Stripe.Checkout.Session;
+      console.info('[frizi-payments] checkout expired', {
+        id: session.id,
+        appointmentId: session.metadata?.appointment_id,
+        promotionRedemptionId: session.metadata?.promotion_redemption_id,
       });
       break;
     }
     case 'payment_intent.succeeded':
-    case 'payment_intent.payment_failed':
-    case 'charge.refunded':
-    case 'customer.subscription.created':
-    case 'customer.subscription.deleted': {
-      console.info('[frizi-payments] stripe event', event.type);
+    case 'payment_intent.payment_failed': {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      console.info('[frizi-payments] payment intent event', {
+        type: event.type,
+        id: paymentIntent.id,
+        appointmentId: paymentIntent.metadata?.appointment_id,
+        amount: paymentIntent.amount,
+      });
+      break;
+    }
+    case 'charge.refunded': {
+      const charge = event.data.object as Stripe.Charge;
+      console.info('[frizi-payments] refund event', {
+        type: event.type,
+        id: charge.id,
+        paymentIntent: charge.payment_intent,
+        amountRefunded: charge.amount_refunded,
+      });
+      break;
+    }
+    case 'refund.updated': {
+      const refund = event.data.object as Stripe.Refund;
+      console.info('[frizi-payments] refund updated', {
+        id: refund.id,
+        paymentIntent: refund.payment_intent,
+        amount: refund.amount,
+        status: refund.status,
+      });
       break;
     }
     default:
