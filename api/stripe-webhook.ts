@@ -75,6 +75,23 @@ export default async function handler(request: IncomingMessage, response: Server
         pricingSnapshotHash: session.metadata?.pricing_snapshot_hash,
         paymentStatus: session.payment_status,
       });
+      if (session.metadata?.frizi_checkout_kind === 'product_purchase') {
+        console.info('[frizi-commerce] order ready for manual fulfilment', {
+          checkoutSessionId: session.id,
+          customerId: session.metadata?.customer_id,
+          orderSnapshotHash: session.metadata?.order_snapshot_hash,
+          merchandiseSubtotalCents: session.metadata?.merchandise_subtotal,
+          productDiscountCents: session.metadata?.product_discount,
+          shippingCents: session.metadata?.shipping_amount,
+          shippingProvider: session.metadata?.shipping_provider,
+          taxCents: session.metadata?.tax_amount,
+          amountDueCents: session.metadata?.amount_due,
+          commissionTotalCents: session.metadata?.commission_total,
+          nextOrderStatus: 'paid',
+          nextFulfillmentStatus: 'awaiting_purchase',
+          nextCommissionStatus: 'pending_return_window',
+        });
+      }
       break;
     }
     case 'checkout.session.expired': {

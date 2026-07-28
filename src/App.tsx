@@ -92,6 +92,92 @@ type CheckoutSummary = {
 
 type TipChoice = 15 | 18 | 20 | 25 | 'custom' | 'none';
 
+type CommerceCatalogueItem = {
+  product: {
+    id: string;
+    brandName: string;
+    productName: string;
+    subtitle: string;
+    description: string;
+    usageInstructions: string;
+    warnings: string;
+    productCategories: string[];
+    complianceState: string;
+    primaryImage: string;
+    complianceNote: string;
+    sellerIdentity: string;
+  };
+  variant: {
+    id: string;
+    variantName: string;
+    sku: string;
+    priceCents: number;
+    compareAtPriceCents: number | null;
+    quantityOnHand: number;
+    quantityReserved: number;
+    inventoryMode: string;
+  };
+  recommendation: null | {
+    id: string;
+    professionalId: string;
+    reason: string;
+    usageInstructions: string;
+    frequency: string;
+    recommendedAt: string;
+  };
+  purchasable: boolean;
+  blockedReason: string;
+};
+
+type CommerceCartItem = {
+  variantId: string;
+  quantity: number;
+  recommendationId?: string;
+};
+
+type CommerceCartSummary = {
+  customerId: string;
+  items: Array<{
+    variantId: string;
+    productName: string;
+    brandName: string;
+    variantName: string;
+    primaryImage: string;
+    quantity: number;
+    unitPriceCents: number;
+    lineSubtotalCents: number;
+    discountCents: number;
+    lineNetCents: number;
+    professionalName: string;
+    commissionCents: number;
+    returnPolicyId: string;
+  }>;
+  merchandiseSubtotalCents: number;
+  productDiscountCents: number;
+  merchandiseNetCents: number;
+  shipping: {
+    provider: string;
+    service: string;
+    shippingCents: number;
+    shippingDiscountCents: number;
+    estimatedTransitDays: string;
+    packageName: string;
+    destinationProvince: string;
+    destinationPostalCode: string;
+  };
+  taxBps: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
+  promotion: null | { id: string; name: string; code: string; scope: string; discountType: string; discountValue: number };
+  sellerIdentity: string;
+  customerServiceContact: string;
+  policyVersion: string;
+  quoteExpiresAt: string;
+  featureFlags: Record<string, boolean>;
+  complianceWarning: string;
+};
+
 const taxRate = 0.13;
 const defaultTipChoice: TipChoice = 18;
 const clientSessionStorageKey = 'frizi-client-session';
@@ -2141,22 +2227,304 @@ function SavedPanel({
 }
 
 function ProductsPanel() {
-  const products = [
-    { name: 'Curl Routine Starter Kit', detail: 'Saved after Mara recommended it for dry ends.', price: '$68' },
-    { name: 'Texture Spray', detail: 'Good for movement, shape, and second-day hair.', price: '$24' },
-    { name: 'Dry Shampoo', detail: 'For stretching blowouts and keeping volume.', price: '$30' },
-  ];
+  const customerId = 'client_ari_demo';
+  const [catalogue, setCatalogue] = useState<CommerceCatalogueItem[]>([]);
+  const [cartItems, setCartItems] = useState<CommerceCartItem[]>([]);
+  const [province, setProvince] = useState('ON');
+  const [postalCode, setPostalCode] = useState('M5V 2T6');
+  const [promoCodeDraft, setPromoCodeDraft] = useState('');
+  const [appliedPromoCode, setAppliedPromoCode] = useState('');
+  const [summary, setSummary] = useState<CommerceCartSummary | null>(null);
+  const [commerceError, setCommerceError] = useState('');
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCatalogue() {
+      try {
+        const response = await fetch(`/api/commerce-catalog?customerId=${encodeURIComponent(customerId)}`);
+        const payload = await response.json();
+        if (!cancelled) {
+          setCatalogue(payload.catalogue || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCommerceError(error instanceof Error ? error.message : 'Could not load product catalogue.');
+        }
+      }
+    }
+
+    loadCatalogue();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const cartPayload = useMemo(
+    () => ({
+      customerId,
+      items: cartItems,
+      shippingAddress: { province, postalCode },
+      promoCode: appliedPromoCode || undefined,
+    }),
+    [appliedPromoCode, cartItems, postalCode, province],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCommerceError('');
+
+    async function loadCartSummary() {
+      if (cartItems.length === 0) {
+        setSummary(null);
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/commerce-cart-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cartPayload),
+          signal: controller.signal,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          setSummary(null);
+          setCommerceError(payload.error || 'Could not calculate cart.');
+          return;
+        }
+        setSummary(payload.summary);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setCommerceError(error instanceof Error ? error.message : 'Could not calculate cart.');
+        }
+      }
+    }
+
+    loadCartSummary();
+    return () => controller.abort();
+  }, [cartItems.length, cartPayload]);
+
+  function addToCart(item: CommerceCatalogueItem) {
+    if (!item.purchasable) {
+      setCommerceError(item.blockedReason);
+      return;
+    }
+
+    setCartItems((current) => {
+      const existing = current.find((cartItem) => cartItem.variantId === item.variant.id);
+      if (existing) {
+        return current.map((cartItem) =>
+          cartItem.variantId === item.variant.id ? { ...cartItem, quantity: Math.min(cartItem.quantity + 1, 12) } : cartItem,
+        );
+      }
+      return [
+        ...current,
+        {
+          variantId: item.variant.id,
+          quantity: 1,
+          recommendationId: item.recommendation?.id,
+        },
+      ];
+    });
+  }
+
+  async function startProductCheckout() {
+    setCheckoutLoading(true);
+    setCommerceError('');
+    try {
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'product_purchase',
+          customerEmail: 'ari@frizi.demo',
+          ...cartPayload,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setCommerceError(payload.error || 'Could not start product checkout.');
+        return;
+      }
+      window.location.href = payload.url;
+    } catch (error) {
+      setCommerceError(error instanceof Error ? error.message : 'Could not start product checkout.');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }
 
   return (
-    <div className="mt-5 grid gap-3">
-      {products.map((product) => (
-        <div key={product.name} className="rounded-[24px] border border-white/10 bg-[#151519] p-5">
-          <ShoppingBag className="text-[#f4c430]" size={24} />
-          <h2 className="mt-3 text-xl font-black">{product.name}</h2>
-          <p className="mt-2 leading-7 text-white/68">{product.detail}</p>
-          <p className="mt-3 text-lg font-black text-[#f4c430]">{product.price}</p>
+    <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="space-y-3">
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <ShoppingBag className="text-[#f4c430]" size={28} />
+          <h2 className="mt-3 text-2xl font-black">Recommended for you</h2>
+          <p className="mt-2 leading-7 text-white/68">
+            Products are sold by Frizi, not sent to an outside affiliate checkout. Only Canadian-sale-approved variants can be added to cart.
+          </p>
         </div>
-      ))}
+
+        {catalogue.map((item) => (
+          <article key={item.variant.id} className="overflow-hidden rounded-[28px] border border-white/10 bg-[#151519]">
+            <div className="grid gap-4 p-4 sm:grid-cols-[128px,1fr]">
+              <img className="aspect-square w-full rounded-3xl object-cover" src={item.product.primaryImage} alt="" />
+              <div className="min-w-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-[#f4c430]">{item.product.brandName}</p>
+                    <h3 className="mt-1 text-xl font-black">{item.product.productName}</h3>
+                    <p className="mt-1 text-sm font-semibold text-white/58">{item.variant.variantName}</p>
+                  </div>
+                  <p className="shrink-0 text-lg font-black text-[#f4c430]">{formatCurrency(item.variant.priceCents)}</p>
+                </div>
+
+                {item.recommendation ? (
+                  <div className="mt-3 rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-3">
+                    <p className="text-sm font-black text-[#f4c430]">Recommended by Mara Chen</p>
+                    <p className="mt-1 text-sm leading-6 text-white/72">{item.recommendation.reason}</p>
+                    <p className="mt-1 text-xs font-bold text-white/48">{item.recommendation.frequency}</p>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm leading-6 text-white/62">{item.product.description}</p>
+                )}
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-white/12 px-3 py-1 text-xs font-bold text-white/64">{item.product.complianceState}</span>
+                  <span className="rounded-full border border-white/12 px-3 py-1 text-xs font-bold text-white/64">{item.variant.inventoryMode}</span>
+                  {item.product.productCategories.slice(0, 2).map((category) => (
+                    <span key={category} className="rounded-full border border-white/12 px-3 py-1 text-xs font-bold text-white/64">{category.replace(/_/g, ' ')}</span>
+                  ))}
+                </div>
+
+                {!item.purchasable ? (
+                  <p className="mt-3 rounded-2xl bg-red-500/12 p-3 text-sm font-bold text-red-100">{item.blockedReason}</p>
+                ) : null}
+
+                <button
+                  className={`mt-4 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 font-black ${
+                    item.purchasable ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white/42'
+                  }`}
+                  type="button"
+                  onClick={() => addToCart(item)}
+                  disabled={!item.purchasable}
+                >
+                  <ShoppingBag size={18} />
+                  {item.purchasable ? 'Add to cart' : 'Blocked pending review'}
+                </button>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <h2 className="flex items-center gap-2 text-2xl font-black">
+            <ReceiptText className="text-[#f4c430]" size={22} />
+            Cart
+          </h2>
+          {cartItems.length === 0 ? (
+            <p className="mt-3 leading-7 text-white/64">Add an approved recommended product to preview shipping, tax, commission attribution, and Stripe checkout.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {summary?.items.map((item) => (
+                <div key={item.variantId} className="flex gap-3 rounded-2xl bg-white/[0.05] p-3">
+                  <img className="h-16 w-16 rounded-2xl object-cover" src={item.primaryImage} alt="" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-black">{item.productName}</p>
+                    <p className="text-sm font-semibold text-white/55">Qty {item.quantity} - {formatCurrency(item.lineNetCents)}</p>
+                    {item.professionalName ? <p className="text-xs font-bold text-[#f4c430]">Commission tracked for {item.professionalName}</p> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <label>
+              <span className="text-xs font-black uppercase tracking-[0.14em] text-white/42">Province</span>
+              <select
+                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-3 font-bold text-white"
+                value={province}
+                onChange={(event) => setProvince(event.target.value)}
+              >
+                {['ON', 'BC', 'AB', 'QC', 'NS', 'NB', 'MB', 'SK', 'PE', 'NL', 'NT', 'YT', 'NU'].map((option) => (
+                  <option key={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="text-xs font-black uppercase tracking-[0.14em] text-white/42">Postal code</span>
+              <input
+                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-3 font-bold text-white outline-none"
+                value={postalCode}
+                onChange={(event) => setPostalCode(event.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+            <label className="text-xs font-black uppercase tracking-[0.14em] text-white/42" htmlFor="product-promo-code">
+              Product promo
+            </label>
+            <div className="mt-2 flex gap-2">
+              <input
+                id="product-promo-code"
+                className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/30 px-3 py-3 font-bold text-white outline-none placeholder:text-white/35"
+                placeholder="PRODUCT10"
+                value={promoCodeDraft}
+                onChange={(event) => setPromoCodeDraft(event.target.value)}
+              />
+              <button className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-black" type="button" onClick={() => setAppliedPromoCode(promoCodeDraft.trim().toUpperCase())}>
+                Apply
+              </button>
+            </div>
+            {summary?.promotion ? (
+              <button className="mt-3 text-sm font-black text-[#f4c430]" type="button" onClick={() => {
+                setAppliedPromoCode('');
+                setPromoCodeDraft('');
+              }}>
+                {summary.promotion.name} applied. Remove
+              </button>
+            ) : null}
+          </div>
+
+          {summary ? (
+            <div className="mt-4 rounded-2xl bg-black/28 p-4">
+              <ReceiptRow label="Merchandise" value={formatCurrency(summary.merchandiseSubtotalCents)} />
+              {summary.productDiscountCents > 0 ? <ReceiptRow label="Product discount" value={`-${formatCurrency(summary.productDiscountCents)}`} highlight /> : null}
+              <ReceiptRow label="Shipping" value={formatCurrency(summary.shipping.shippingCents)} />
+              {summary.shipping.shippingDiscountCents > 0 ? <ReceiptRow label="Shipping promo" value={`-${formatCurrency(summary.shipping.shippingDiscountCents)}`} highlight /> : null}
+              <ReceiptRow label="Tax" value={formatCurrency(summary.taxCents)} />
+              <ReceiptRow label="Total" value={formatCurrency(summary.totalCents)} strong />
+              <p className="mt-3 text-xs font-bold text-white/48">{summary.shipping.service}. {summary.shipping.estimatedTransitDays}. Quote expires {new Date(summary.quoteExpiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</p>
+            </div>
+          ) : null}
+
+          {commerceError ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{commerceError}</p> : null}
+
+          <button
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black disabled:bg-white/10 disabled:text-white/40"
+            type="button"
+            onClick={startProductCheckout}
+            disabled={!summary || checkoutLoading}
+          >
+            <CreditCard size={18} />
+            {checkoutLoading ? 'Opening Stripe...' : 'Checkout with Frizi'}
+          </button>
+        </div>
+
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <ShieldCheck className="text-[#f4c430]" size={24} />
+          <h3 className="mt-3 text-xl font-black">Commerce safeguards</h3>
+          <p className="mt-2 text-sm leading-6 text-white/62">
+            Product checkout is separated from appointment payment. Unapproved products are blocked, returns and recalls remain operational workflows, and legal/tax/product-safety review is still required before live launch.
+          </p>
+        </div>
+      </aside>
     </div>
   );
 }

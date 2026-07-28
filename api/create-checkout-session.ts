@@ -8,6 +8,12 @@ import {
   metadataFromSummary,
   platformFeeRate,
 } from './_frizi-pricing.mjs';
+import {
+  calculateCommerceCart,
+  commerceCheckoutEnabled,
+  commerceMetadata,
+  createCommerceLineItems,
+} from './_frizi-commerce.mjs';
 
 type CheckoutKind = 'pro_subscription' | 'service_booking' | 'product_purchase';
 
@@ -23,6 +29,8 @@ type CheckoutRequest = {
   tipSelection?: '15' | '18' | '20' | '25' | 'custom' | 'none';
   customTipAmount?: string;
   currency?: string;
+  items?: Array<{ variantId: string; quantity: number; recommendationId?: string }>;
+  shippingAddress?: { province?: string; postalCode?: string };
 };
 
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
@@ -67,6 +75,47 @@ export default async function handler(request: IncomingMessage & { body?: unknow
     apiVersion: '2026-06-24.dahlia',
   });
   const baseUrl = getBaseUrl(request);
+
+  if (kind === 'product_purchase') {
+    if (!commerceCheckoutEnabled) {
+      return sendJson(response, 403, {
+        error: 'Frizi Commerce checkout is disabled for this environment.',
+        requiredEnv: ['COMMERCE_CHECKOUT_ENABLED=true'],
+      });
+    }
+
+    let commerceSummary;
+    try {
+      commerceSummary = calculateCommerceCart(payload);
+    } catch (error) {
+      return sendJson(response, 400, { error: error instanceof Error ? error.message : 'Could not calculate cart.' });
+    }
+
+    const metadata = commerceMetadata(commerceSummary);
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        customer_email: payload.customerEmail,
+        line_items: createCommerceLineItems(commerceSummary),
+        success_url: `${baseUrl}/?commerce=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/?commerce=cancelled`,
+        metadata,
+        payment_intent_data: { metadata },
+        shipping_address_collection: {
+          allowed_countries: ['CA'],
+        },
+      },
+      {
+        idempotencyKey: `frizi_commerce_${commerceSummary.idempotencyKey}`,
+      },
+    );
+
+    return sendJson(response, 200, {
+      url: session.url,
+      id: session.id,
+      summary: commerceSummary,
+    });
+  }
 
   if (kind !== 'service_booking') {
     return sendJson(response, 400, {
