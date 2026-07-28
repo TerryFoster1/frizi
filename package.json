@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "latest",
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.9",
     "@vitejs/plugin-react": "latest",
     "class-variance-authority": "latest",
     "clsx": "latest",
