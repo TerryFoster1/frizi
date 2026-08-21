@@ -114,7 +114,6 @@ export default async function handler(request: IncomingMessage, response: Server
         expiresAt: invite.expires_at,
       },
       professional: publicProfessionalPayload(professional, services || [], promotions?.[0] || null),
-      mobilePrompt: 'Frizi works best in the mobile app.',
     });
   } catch (error) {
     return sendJson(response, 500, {

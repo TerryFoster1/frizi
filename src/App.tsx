@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
-  Gift,
   MapPin,
   Mic,
   QrCode,
@@ -19,6 +18,7 @@ import {
   Star,
   Trash2,
   User,
+  X,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import type { Session as SupabaseSession, User as SupabaseUser } from '@supabase/supabase-js';
@@ -170,11 +170,12 @@ type CommerceCartSummary = {
 const clientSessionStorageKey = 'frizi-client-session';
 const pendingBookingStorageKey = 'frizi-client-pending-booking';
 const clientOAuthContextStorageKey = 'frizi-client-oauth-context';
+const pendingInviteStorageKey = 'frizi-client-pending-invite';
 const locationPromptStorageKey = 'frizi-client-location-prompt-complete';
 
 type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
 type AccountNavKey = Exclude<ClientNavKey, 'products'>;
-type ClientAuthIntent = 'default' | 'promo' | 'booking' | AccountNavKey;
+type ClientAuthIntent = 'default' | 'promo' | 'booking' | 'invite' | AccountNavKey;
 
 type FilterState = {
   distanceKm: number;
@@ -214,13 +215,47 @@ function readClientOAuthContext() {
     const rawContext = window.sessionStorage.getItem(clientOAuthContextStorageKey);
     if (!rawContext) return null;
     const parsed = JSON.parse(rawContext) as { intent?: string; returnPath?: string; hasPendingBooking?: boolean };
-    const intent: ClientAuthIntent = parsed.intent === 'promo' || parsed.intent === 'booking' || isAccountNavIntent(parsed.intent as ClientAuthIntent)
+    const intent: ClientAuthIntent = parsed.intent === 'promo' || parsed.intent === 'booking' || parsed.intent === 'invite' || isAccountNavIntent(parsed.intent as ClientAuthIntent)
       ? (parsed.intent as ClientAuthIntent)
       : 'default';
     const returnPath = typeof parsed.returnPath === 'string' && parsed.returnPath.startsWith('/') ? parsed.returnPath : '/';
     return { intent, returnPath, hasPendingBooking: Boolean(parsed.hasPendingBooking) };
   } catch {
     return null;
+  }
+}
+
+function inviteTokenFromPath(pathname = window.location.pathname) {
+  return pathname.match(/^\/invite\/([^/?#]+)/)?.[1] || '';
+}
+
+function writePendingInviteContext(token: string) {
+  if (!token) return;
+  window.localStorage.setItem(
+    pendingInviteStorageKey,
+    JSON.stringify({
+      token,
+      startedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function readPendingInviteContext() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(pendingInviteStorageKey) || '{}') as {
+      token?: string;
+      startedAt?: string;
+    };
+    return typeof parsed.token === 'string' && parsed.token ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingInviteContext(token?: string) {
+  const pending = readPendingInviteContext();
+  if (!token || !pending || pending.token === token) {
+    window.localStorage.removeItem(pendingInviteStorageKey);
   }
 }
 
@@ -232,7 +267,6 @@ type LiveInvite = {
     expiresAt: string | null;
   };
   professional: Professional;
-  mobilePrompt: string;
 };
 
 type BrowserSpeechRecognition = {
@@ -670,7 +704,7 @@ const infoPages: Record<string, InfoPage> = {
 };
 
 function App() {
-  const inviteToken = window.location.pathname.match(/^\/invite\/([^/?#]+)/)?.[1];
+  const inviteToken = inviteTokenFromPath();
   const infoPageMatch = window.location.pathname.match(/^\/(help|policies)\/([^/?#]+)/);
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
@@ -728,6 +762,11 @@ function App() {
           void loadClientAppointments(session);
           if (authContext?.intent === 'promo') {
             setOpenBookingAfterAuth(true);
+          } else if (authContext?.intent === 'invite') {
+            trackClientEvent('auth_completed', {
+              intent: 'invite',
+              route: authContext.returnPath,
+            });
           } else if (authContext && isAccountNavIntent(authContext.intent)) {
             setActiveClientNav(authContext.intent);
           }
@@ -759,23 +798,28 @@ function App() {
 
   if (inviteToken) {
     return (
-      <InviteLanding
-        token={inviteToken}
-        clientSession={clientSession}
-        onAuthRequired={() => openClientAuth('default')}
-        onClientConnected={(session) => {
-          setClientSession(session);
-          window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
-        }}
-        onViewProfile={(professionalId) => {
-          const profileIndex = allProfessionals.findIndex((profile) => profile.id === professionalId || profile.id === `live-${professionalId}`);
-          const profileName = allProfessionals[profileIndex]?.name || 'Frizi invitation';
-          setSubmittedQuery(profileName);
-          setQuery(profileName);
-          setActiveIndex(profileIndex >= 0 ? profileIndex : 0);
-          window.history.pushState({}, '', '/');
-        }}
-      />
+      <>
+        <InviteLanding
+          token={inviteToken}
+          clientSession={clientSession}
+          onAuthRequired={() => openClientAuth('invite')}
+          onClientConnected={(session) => {
+            setClientSession(session);
+            window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
+          }}
+          onContinueHome={(session) => {
+            setClientSession(session);
+            window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
+            setActiveClientNav('profile');
+            window.history.replaceState({}, '', '/');
+            trackClientEvent('client_home_reached', {
+              invitation_token: inviteToken,
+              route: '/',
+            });
+          }}
+        />
+        {authModalOpen ? <ClientAuthModal intent={authIntent} onClose={() => setAuthModalOpen(false)} onComplete={handleClientAuth} /> : null}
+      </>
     );
   }
 
@@ -841,6 +885,14 @@ function App() {
     setClientSession(session);
     window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
     setAuthModalOpen(false);
+    trackClientEvent('auth_completed', {
+      intent: authIntent,
+      route: window.location.pathname,
+    });
+    if (authIntent === 'invite') {
+      setAuthIntent('default');
+      return;
+    }
     if (createdAccount && !window.localStorage.getItem(locationPromptStorageKey)) {
       setLocationPromptOpen(true);
     }
@@ -868,6 +920,7 @@ function App() {
   function clearClientAccountBrowserState() {
     window.localStorage.removeItem(clientSessionStorageKey);
     window.localStorage.removeItem(pendingBookingStorageKey);
+    window.localStorage.removeItem(pendingInviteStorageKey);
     window.sessionStorage.removeItem(clientOAuthContextStorageKey);
     setClientSession(null);
     setClientAppointments([]);
@@ -1303,17 +1356,25 @@ function getSafeClientOAuthReturnPath() {
   return '/';
 }
 
+function professionalInvitePhrase(role: string) {
+  const normalizedRole = role.toLowerCase();
+  if (normalizedRole.includes('barber')) return 'barber';
+  if (normalizedRole.includes('colour') || normalizedRole.includes('color')) return 'colourist';
+  if (normalizedRole.includes('hairdresser') || normalizedRole.includes('stylist')) return 'hairstylist';
+  return 'hair professional';
+}
+
 function InviteLanding({
   clientSession,
   onAuthRequired,
   onClientConnected,
-  onViewProfile,
+  onContinueHome,
   token,
 }: {
   clientSession: ClientSession | null;
   onAuthRequired: () => void;
   onClientConnected: (session: ClientSession) => void;
-  onViewProfile: (professionalId: string) => void;
+  onContinueHome: (session: ClientSession) => void;
   token: string;
 }) {
   const [inviteData, setInviteData] = useState<LiveInvite | null>(null);
@@ -1321,8 +1382,8 @@ function InviteLanding({
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [connectMessage, setConnectMessage] = useState('');
-  const [claimed, setClaimed] = useState(false);
-  const [booking, setBooking] = useState<BookingRequest | null>(null);
+  const [connectionState, setConnectionState] = useState<'idle' | 'success' | 'already' | 'error'>('idle');
+  const autoAcceptAttempted = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1336,7 +1397,7 @@ function InviteLanding({
         if (!response.ok) throw new Error(payload.error || 'This invitation is not available.');
         if (!cancelled) {
           setInviteData(payload as LiveInvite);
-          trackClientEvent('client_invite_opened', {
+          trackClientEvent('invite_opened', {
             invitation_token: token,
             professional_slug: (payload as LiveInvite).professional.id,
           });
@@ -1353,6 +1414,13 @@ function InviteLanding({
       cancelled = true;
     };
   }, [token]);
+
+  useEffect(() => {
+    const pendingInvite = readPendingInviteContext();
+    if (!inviteData || !clientSession?.accessToken || pendingInvite?.token !== token || autoAcceptAttempted.current) return;
+    autoAcceptAttempted.current = true;
+    void acceptInvite(clientSession);
+  }, [clientSession, inviteData, token]);
 
   if (loading) {
     return (
@@ -1372,7 +1440,9 @@ function InviteLanding({
         <section className="mx-auto flex min-h-[82vh] max-w-lg flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-center">
           <QrCode className="mx-auto text-[#f4c430]" size={42} />
           <h1 className="mt-5 text-3xl font-black">This invitation is not available.</h1>
-          <p className="mt-3 text-white/70">{inviteError || 'The link may be expired, disabled, or typed incorrectly. Ask your hair professional for a fresh Frizi invite.'}</p>
+          <p className="mt-3 text-white/70">
+            {inviteError || 'This invitation is no longer available. Ask your professional for a new Frizi invite.'}
+          </p>
           <a className="mt-6 rounded-2xl bg-[#f4c430] px-5 py-4 text-center font-black text-black" href="/">
             Open Frizi
           </a>
@@ -1382,144 +1452,108 @@ function InviteLanding({
   }
 
   const invitingProfessional = inviteData.professional;
-  const offerIsClaimable = true;
+  const professionalPhrase = professionalInvitePhrase(invitingProfessional.role);
 
-  async function claimOffer() {
-    if (!offerIsClaimable || connecting) return;
-    if (!clientSession?.accessToken) {
-      onAuthRequired();
-      setConnectMessage(`Sign in or create your Frizi account, then connect with ${invitingProfessional.name}.`);
-      return;
-    }
-
+  async function acceptInvite(session: ClientSession) {
+    if (connecting) return;
     setConnecting(true);
     setConnectMessage('');
-    trackClientEvent('client_offer_claim_started', {
-      invitation_token: token,
-      professional_slug: invitingProfessional.id,
-    });
+    setConnectionState('idle');
 
     try {
       const response = await fetch('/api/accept-invite', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${clientSession.accessToken}`,
+          Authorization: `Bearer ${session.accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ token, displayName: clientSession.name }),
+        body: JSON.stringify({ token, displayName: session.name }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Could not connect this invite.');
+      if (!response.ok) throw new Error(payload.error || 'We could not connect this invite. Please try again.');
 
-      setClaimed(true);
-      onClientConnected(clientSession);
-      trackClientEvent('client_connected_to_professional', {
+      const alreadyConnected = Boolean((payload as { alreadyConnected?: boolean }).alreadyConnected);
+      const nextState = alreadyConnected ? 'already' : 'success';
+      setConnectionState(nextState);
+      setConnectMessage(
+        alreadyConnected ? `You're already connected to ${invitingProfessional.name}.` : `You're now connected to ${invitingProfessional.name}.`,
+      );
+      clearPendingInviteContext(token);
+      onClientConnected(session);
+      trackClientEvent('invite_accepted', {
         invitation_token: token,
         professional_slug: invitingProfessional.id,
+        result: nextState,
       });
+      window.setTimeout(() => onContinueHome(session), 2000);
     } catch (error) {
-      setConnectMessage(error instanceof Error ? error.message : 'Could not connect this invite.');
+      setConnectionState('error');
+      setConnectMessage(error instanceof Error ? error.message : 'We could not connect this invite. Please try again.');
     } finally {
       setConnecting(false);
     }
   }
 
-  function bookFromInvite() {
-    const inviteService = invitingProfessional.services[0];
-    const inviteDay = buildAvailabilityDays(invitingProfessional.bookingSlots)[0];
-    setBooking({
-      professionalId: invitingProfessional.id,
-      professional: invitingProfessional.name,
-      service: inviteService.name,
-      serviceId: serviceIdFor(invitingProfessional.id, inviteService.name),
-      servicePriceCents: parseMoneyToCents(inviteService.price),
-      date: inviteDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }),
-      time: invitingProfessional.bookingSlots[0],
-      eventId: `appt_${Date.now().toString(36)}`,
-      status: 'pending',
-    });
-    trackClientEvent('client_booking_started', {
+  function startConnection() {
+    if (connecting) return;
+    trackClientEvent('connect_free_clicked', {
       invitation_token: token,
       professional_slug: invitingProfessional.id,
     });
-    trackClientEvent('client_booking_completed', {
-      invitation_token: token,
-      professional_slug: invitingProfessional.id,
-    });
+    if (!clientSession?.accessToken) {
+      writePendingInviteContext(token);
+      onAuthRequired();
+      return;
+    }
+    void acceptInvite(clientSession);
   }
 
   return (
-    <main className="min-h-screen bg-[#080808] text-white">
-      <section className="mx-auto grid min-h-screen w-full max-w-6xl gap-5 px-4 py-5 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-8">
-        <aside className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
-          <img className="h-72 w-full object-cover sm:h-96 lg:h-[620px]" src={invitingProfessional.detailImage} alt="" />
-        </aside>
+    <main className="min-h-screen bg-[#080808] px-4 py-5 text-white">
+      <section className="mx-auto flex min-h-[calc(100vh-40px)] w-full max-w-md flex-col justify-center">
+        <section className="rounded-[32px] border border-white/10 bg-[#151519] p-5 shadow-2xl shadow-black/45">
+          <img
+            className="mx-auto h-28 w-28 rounded-full border-2 border-[#f4c430] object-cover shadow-xl shadow-black/40"
+            src={invitingProfessional.heroImage}
+            alt=""
+          />
+          <h1 className="mt-5 text-center text-3xl font-black leading-tight">{invitingProfessional.name}</h1>
+          <p className="mt-2 text-center text-sm font-bold text-[#f4c430]">
+            {invitingProfessional.role} at {invitingProfessional.studio}
+          </p>
+          <p className="mx-auto mt-5 max-w-sm text-center text-lg font-bold leading-7 text-white/82">
+            Your {professionalPhrase} wants to connect with you on Frizi.
+          </p>
+          <p className="mx-auto mt-3 max-w-sm text-center text-sm leading-6 text-white/62">
+            Connect free so they can recognize your Frizi profile when you book, message, or share hair notes with them.
+          </p>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.05] p-5 shadow-2xl shadow-black/30 sm:p-7">
-          <div className="flex items-center gap-4">
-            <img className="h-20 w-20 rounded-full border-2 border-[#f4c430] object-cover" src={invitingProfessional.heroImage} alt="" />
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#f4c430]">Personal invitation</p>
-              <h1 className="text-3xl font-black leading-tight">{invitingProfessional.name}</h1>
-              <p className="text-white/68">{invitingProfessional.role} at {invitingProfessional.studio}</p>
-            </div>
-          </div>
+          <button
+            className="mt-6 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 text-base font-black text-black disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            disabled={connecting || connectionState === 'success' || connectionState === 'already'}
+            onClick={startConnection}
+          >
+            <QrCode size={19} />
+            {connecting ? 'Connecting...' : connectionState === 'success' || connectionState === 'already' ? 'Connected' : 'Connect free'}
+          </button>
 
-          <div className="mt-5 rounded-3xl bg-[#f4c430] p-5 text-black">
-            <div className="flex items-start gap-3">
-              <Gift className="mt-1 shrink-0" size={24} />
-              <div>
-                <p className="text-2xl font-black">Connect with {invitingProfessional.name}</p>
-                <p className="mt-2 text-sm font-bold leading-6">
-                  Accept this invite to share your Frizi hair profile with this professional and make future bookings easier.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            {['Book directly', 'Save your hair profile', 'Receive reminders and offers'].map((item) => (
-              <div key={item} className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                <CheckCircle2 className="text-[#f4c430]" size={20} />
-                <p className="mt-3 text-sm font-black">{item}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-5 grid gap-3 rounded-3xl border border-white/10 bg-black/25 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
-            <div>
-              <p className="font-black text-white">{inviteData.mobilePrompt}</p>
-              <p className="mt-2 text-sm leading-6 text-white/70">Continue on web today. Mobile apps are coming soon.</p>
-            </div>
-            <span className="rounded-full border border-[#f4c430]/35 px-3 py-2 text-xs font-black text-[#f4c430]">Web ready</span>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <button
-              className="min-h-14 rounded-2xl bg-[#f4c430] px-5 font-black text-black disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!offerIsClaimable || connecting}
-              onClick={claimOffer}
+          {connectMessage ? (
+            <p
+              className={`mt-4 rounded-2xl border p-4 text-center text-sm font-bold leading-6 ${
+                connectionState === 'error'
+                  ? 'border-red-400/35 bg-red-500/12 text-red-100'
+                  : 'border-[#f4c430]/35 bg-[#f4c430]/10 text-[#f4c430]'
+              }`}
+              role="status"
             >
-              {claimed ? 'Connected' : connecting ? 'Connecting...' : clientSession ? 'Connect' : 'Sign in to connect'}
-            </button>
-            <button className="min-h-14 rounded-2xl border border-white/15 px-5 font-black text-white" onClick={() => onViewProfile(invitingProfessional.id)}>
-              View professional profile
-            </button>
-          </div>
-
-          {connectMessage ? <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 p-4 text-sm font-bold text-[#f4c430]">{connectMessage}</p> : null}
-
-          {claimed ? (
-            <div className="mt-5 rounded-3xl border border-[#f4c430]/40 bg-[#f4c430]/10 p-4">
-              <p className="font-black text-[#f4c430]">Connected to {invitingProfessional.name}</p>
-              <p className="mt-2 text-sm leading-6 text-white/72">Your offer is attached to this professional relationship. You can book now without searching again.</p>
-              <button className="mt-4 min-h-12 w-full rounded-2xl bg-white px-5 font-black text-black" onClick={bookFromInvite}>
-                Join and book {invitingProfessional.bookingSlots[0]}
-              </button>
-            </div>
+              {connectMessage}
+            </p>
           ) : null}
 
-            {booking ? <BookingConfirmation booking={booking} clientSession={clientSession || { name: 'Invite Client', email: 'invite@frizi.ca' }} /> : null}
+          {connectionState === 'success' || connectionState === 'already' ? (
+            <p className="mt-3 text-center text-xs font-semibold text-white/52">Taking you to your Frizi home...</p>
+          ) : null}
         </section>
       </section>
     </main>
@@ -1555,6 +1589,12 @@ function ClientAuthModal({
     setLoading(true);
     try {
       const returnPath = getSafeClientOAuthReturnPath();
+      if (intent === 'invite') writePendingInviteContext(inviteTokenFromPath());
+      trackClientEvent('auth_started', {
+        intent,
+        method: 'google',
+        route: returnPath,
+      });
       window.sessionStorage.setItem(
         clientOAuthContextStorageKey,
         JSON.stringify({
@@ -1607,6 +1647,12 @@ function ClientAuthModal({
     try {
       const supabase = createClient();
       const returnPath = getSafeClientOAuthReturnPath();
+      if (intent === 'invite') writePendingInviteContext(inviteTokenFromPath());
+      trackClientEvent('auth_started', {
+        intent,
+        method: mode,
+        route: returnPath,
+      });
       window.sessionStorage.setItem(
         clientOAuthContextStorageKey,
         JSON.stringify({
@@ -1629,7 +1675,9 @@ function ClientAuthModal({
         if (error) throw error;
         if (!data.session) {
           setNotice(
-            intent === 'booking'
+            intent === 'invite'
+              ? "Check your email to verify your Frizi account. We'll connect you when you return and sign in."
+              : intent === 'booking'
               ? 'Check your email to verify your Frizi account. Your selected appointment is saved for when you return and sign in.'
               : 'Check your email to verify your Frizi account, then return to Frizi and sign in.',
           );
@@ -1672,14 +1720,16 @@ function ClientAuthModal({
               <p className="mt-2 text-sm font-bold leading-6 text-white/68">Book and manage appointments directly with your stylist.</p>
             ) : intent === 'promo' ? (
               <p className="mt-2 text-sm font-bold leading-6 text-white/68">Sign up for exclusive deals and promos.</p>
+            ) : intent === 'invite' ? (
+              <p className="mt-2 text-sm font-bold leading-6 text-white/68">Connect with your professional and keep your Frizi profile ready for future visits.</p>
             ) : (
               <p className="mt-2 text-sm font-bold leading-6 text-white/68">
                 Manage your bookings, save your hair profile and inspiration photos, connect with your stylist, and receive discounts and promotions.
               </p>
             )}
           </div>
-          <button className="rounded-full border border-white/10 px-3 py-2 text-sm font-black text-white/70" type="button" onClick={onClose}>
-            Close
+          <button className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 text-white/70" type="button" onClick={onClose} aria-label="Close">
+            <X size={18} />
           </button>
         </div>
 
@@ -1738,14 +1788,14 @@ function ClientAuthModal({
         />
 
         <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-password">
-          Password
+          {mode === 'signup' ? 'Create password' : 'Password'}
         </label>
         <input
           id="client-auth-password"
           className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          placeholder="Password"
+          placeholder={mode === 'signup' ? 'Create password' : 'Password'}
           type="password"
         />
 
@@ -1754,14 +1804,16 @@ function ClientAuthModal({
 
         <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-4 font-black text-black disabled:opacity-60" type="button" onClick={submitAuth} disabled={loading}>
           <User size={18} />
-          {loading ? 'Please wait...' : mode === 'signup' ? 'Create account' : 'Sign in'}
+          {loading ? 'Please wait...' : mode === 'signup' ? 'Create free account' : 'Sign in'}
         </button>
         <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
           {intent === 'promo'
             ? 'Promos only apply when booking and paying through Frizi.'
             : intent === 'booking'
               ? 'After you sign in, Frizi will bring you back to this appointment request.'
-            : 'Use your Frizi account to connect with professionals, keep hair photos, and manage bookings.'}
+              : intent === 'invite'
+                ? 'This connection is free. Marketing messages need separate consent.'
+                : 'Use your Frizi account to connect with professionals, keep hair photos, and manage bookings.'}
         </p>
       </section>
     </div>

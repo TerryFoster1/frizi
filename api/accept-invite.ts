@@ -123,23 +123,38 @@ export default async function handler(request: IncomingMessage & { body?: unknow
 
     if (clientError) throw clientError;
 
-    const { data: relationship, error: relationshipError } = await supabase
+    const { data: existingRelationship, error: existingRelationshipError } = await supabase
       .from('frizi_client_professional_relationships')
-      .upsert(
-        {
-          client_id: client.id,
-          professional_id: invite.professional_id,
-          status: 'active',
-          source: 'invite',
-          invite_status: 'accepted',
-          account_claimed_status: 'claimed',
-          marketing_consent_status: 'unknown',
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'client_id,professional_id' },
-      )
       .select('id, client_id, professional_id, source')
-      .single();
+      .eq('client_id', client.id)
+      .eq('professional_id', invite.professional_id)
+      .maybeSingle();
+
+    if (existingRelationshipError) throw existingRelationshipError;
+
+    const relationshipMutation = {
+      client_id: client.id,
+      professional_id: invite.professional_id,
+      status: 'active',
+      source: existingRelationship?.source || 'invite',
+      invite_status: 'accepted',
+      account_claimed_status: 'claimed',
+      marketing_consent_status: 'unknown',
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: relationship, error: relationshipError } = existingRelationship
+      ? await supabase
+          .from('frizi_client_professional_relationships')
+          .update(relationshipMutation)
+          .eq('id', existingRelationship.id)
+          .select('id, client_id, professional_id, source')
+          .single()
+      : await supabase
+          .from('frizi_client_professional_relationships')
+          .insert(relationshipMutation)
+          .select('id, client_id, professional_id, source')
+          .single();
 
     if (relationshipError) throw relationshipError;
 
@@ -148,7 +163,7 @@ export default async function handler(request: IncomingMessage & { body?: unknow
       .update({ last_accepted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('id', invite.id);
 
-    return sendJson(response, 200, { relationship });
+    return sendJson(response, 200, { relationship, alreadyConnected: Boolean(existingRelationship) });
   } catch (error) {
     return sendJson(response, 500, {
       error: error instanceof Error ? error.message : 'Invite acceptance failed.',
