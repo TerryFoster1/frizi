@@ -14,6 +14,8 @@ import {
   commerceMetadata,
   createCommerceLineItems,
 } from './_frizi-commerce.mjs';
+import { isDemoRequest, sendJson, sendProductionDisabled } from './_environment.mjs';
+import { enforceRateLimit } from './_rate-limit.mjs';
 
 type CheckoutKind = 'pro_subscription' | 'service_booking' | 'product_purchase';
 
@@ -32,12 +34,6 @@ type CheckoutRequest = {
   items?: Array<{ variantId: string; quantity: number; recommendationId?: string }>;
   shippingAddress?: { province?: string; postalCode?: string };
 };
-
-function sendJson(response: ServerResponse, status: number, payload: unknown) {
-  response.statusCode = status;
-  response.setHeader('Content-Type', 'application/json');
-  response.end(JSON.stringify(payload));
-}
 
 function getBaseUrl(request: IncomingMessage) {
   const host = request.headers.host;
@@ -62,6 +58,8 @@ export default async function handler(request: IncomingMessage & { body?: unknow
     return sendJson(response, 405, { error: 'Method not allowed' });
   }
 
+  if (!(await enforceRateLimit(request, response, 'checkout'))) return;
+
   if (!process.env.STRIPE_SECRET_KEY) {
     return sendJson(response, 501, {
       error: 'Stripe is not configured yet.',
@@ -71,6 +69,14 @@ export default async function handler(request: IncomingMessage & { body?: unknow
 
   const payload = await readJson(request);
   const kind = payload.kind || 'service_booking';
+
+  if (!isDemoRequest(request)) {
+    if (kind === 'product_purchase') return sendProductionDisabled(response, 'Product checkout');
+    if (kind === 'service_booking' && process.env.FRIZI_APPOINTMENT_PAYMENTS_ENABLED !== 'true') {
+      return sendProductionDisabled(response, 'Appointment checkout');
+    }
+  }
+
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
     apiVersion: '2026-06-24.dahlia',
   });

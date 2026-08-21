@@ -1,0 +1,355 @@
+/// <reference types="node" />
+
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createSupabaseServiceClient, isSupabaseServiceConfigured } from './_supabase.mjs';
+import { enforceRateLimit } from './_rate-limit.mjs';
+
+type AppointmentPayload = {
+  professionalId?: string;
+  serviceId?: string;
+  scheduledStart?: string;
+  clientNotes?: string;
+  referencePhotoUrls?: string[];
+};
+
+type ServiceRow = {
+  id: string;
+  professional_id: string;
+  name: string;
+  public_description: string | null;
+  base_price_cents: number;
+  currency: string;
+  duration_minutes: number | null;
+  pricing_type: string;
+  deposit_type: string;
+  deposit_amount_cents: number;
+  deposit_percentage: number;
+  buffer_before_minutes: number;
+  buffer_after_minutes: number;
+  service_metadata: Record<string, unknown> | null;
+};
+
+type ProfessionalRow = {
+  id: string;
+  display_name: string;
+  public_profile_status: string;
+  bookable: boolean;
+  subscription_status: string;
+  booking_settings: Record<string, unknown> | null;
+};
+
+function sendJson(response: ServerResponse, status: number, payload: unknown) {
+  response.statusCode = status;
+  response.setHeader('Content-Type', 'application/json');
+  response.end(JSON.stringify(payload));
+}
+
+async function readJson(request: IncomingMessage & { body?: unknown }): Promise<AppointmentPayload> {
+  if (request.body && typeof request.body === 'object') return request.body as AppointmentPayload;
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const rawBody = Buffer.concat(chunks).toString('utf8');
+  return rawBody ? (JSON.parse(rawBody) as AppointmentPayload) : {};
+}
+
+function bearerToken(request: IncomingMessage) {
+  const header = request.headers.authorization || '';
+  const match = Array.isArray(header) ? header[0]?.match(/^Bearer\s+(.+)$/i) : header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || '';
+}
+
+function splitName(displayName: string) {
+  const parts = displayName.trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || null,
+    lastName: parts.length > 1 ? parts.slice(1).join(' ') : null,
+  };
+}
+
+function normalizeProfessionalId(value: string) {
+  return value.replace(/^live-/, '');
+}
+
+function isActiveSubscription(status: string | null | undefined) {
+  return status === 'active' || status === 'trialing';
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60_000);
+}
+
+function timeToMinutes(value: string) {
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function isWithinAvailability(professional: ProfessionalRow, start: Date, end: Date) {
+  const settings = professional.booking_settings as { availability?: { shifts?: Array<{ date?: string; startTime?: string; endTime?: string }> } } | null;
+  const shifts = settings?.availability?.shifts;
+  if (!Array.isArray(shifts) || shifts.length === 0) return false;
+
+  const startMinutes = start.getHours() * 60 + start.getMinutes();
+  const endMinutes = end.getHours() * 60 + end.getMinutes();
+  const selectedDateKey = dateKey(start);
+
+  return shifts.some((shift) => {
+    if (shift.date !== selectedDateKey) return false;
+    const shiftStart = timeToMinutes(String(shift.startTime || ''));
+    const shiftEnd = timeToMinutes(String(shift.endTime || ''));
+    if (shiftStart === null || shiftEnd === null) return false;
+    return startMinutes >= shiftStart && endMinutes <= shiftEnd;
+  });
+}
+
+function paymentRequirementFor(service: ServiceRow) {
+  const metadataRequirement = String(service.service_metadata?.payment_requirement || '');
+  if (['pay_at_appointment', 'frizi_payment_optional', 'deposit_required', 'full_prepayment_required'].includes(metadataRequirement)) {
+    return metadataRequirement;
+  }
+  if (service.deposit_type !== 'none') return 'deposit_required';
+  return 'pay_at_appointment';
+}
+
+function paymentRequiredCentsFor(service: ServiceRow, paymentRequirement: string) {
+  if (paymentRequirement === 'full_prepayment_required') return service.base_price_cents;
+  if (paymentRequirement !== 'deposit_required') return 0;
+  if (service.deposit_type === 'fixed') return service.deposit_amount_cents;
+  if (service.deposit_type === 'percentage') return Math.round(service.base_price_cents * (service.deposit_percentage / 100));
+  return 0;
+}
+
+function appointmentStatusFor(paymentRequirement: string) {
+  return paymentRequirement === 'pay_at_appointment' || paymentRequirement === 'frizi_payment_optional' ? 'pending' : 'pending';
+}
+
+function mapAppointment(row: Record<string, any>) {
+  const serviceSnapshot = (row.service_snapshot || {}) as Record<string, any>;
+  const professional = Array.isArray(row.frizi_professionals) ? row.frizi_professionals[0] : row.frizi_professionals;
+  return {
+    id: row.id,
+    professionalId: row.professional_id,
+    clientId: row.client_id,
+    serviceId: row.service_id,
+    service: String(serviceSnapshot.name || 'Appointment'),
+    professional: String(row.professional_name || professional?.display_name || 'Professional'),
+    scheduledStart: row.starts_at,
+    scheduledEnd: row.ends_at,
+    status: row.status,
+    paymentRequirement: row.payment_requirement,
+    paymentStatus: row.payment_status,
+  };
+}
+
+export default async function handler(request: IncomingMessage & { body?: unknown }, response: ServerResponse) {
+  if (!['GET', 'POST'].includes(request.method || '')) {
+    return sendJson(response, 405, { error: 'Method not allowed' });
+  }
+
+  if (!(await enforceRateLimit(request, response, 'client_booking', { limit: request.method === 'GET' ? 60 : 10 }))) return;
+
+  if (!isSupabaseServiceConfigured()) {
+    return sendJson(response, 501, { error: 'Frizi booking is not configured.' });
+  }
+
+  const accessToken = bearerToken(request);
+  if (!accessToken) return sendJson(response, 401, { error: 'Sign in before booking an appointment.' });
+
+  const supabase = createSupabaseServiceClient();
+  const { data: userResult, error: userError } = await supabase.auth.getUser(accessToken);
+  if (userError || !userResult.user) {
+    return sendJson(response, 401, { error: 'Sign in again before booking an appointment.' });
+  }
+
+  if (request.method === 'GET') {
+    const { data: profile, error: profileError } = await supabase
+      .from('frizi_profiles')
+      .select('id')
+      .eq('auth_user_id', userResult.user.id)
+      .maybeSingle();
+    if (profileError) return sendJson(response, 500, { error: profileError.message });
+    if (!profile) return sendJson(response, 200, { appointments: [] });
+
+    const { data: client, error: clientError } = await supabase.from('frizi_clients').select('id').eq('profile_id', profile.id).maybeSingle();
+    if (clientError) return sendJson(response, 500, { error: clientError.message });
+    if (!client) return sendJson(response, 200, { appointments: [] });
+
+    const { data, error } = await supabase
+      .from('frizi_appointments')
+      .select('id, professional_id, client_id, service_id, starts_at, ends_at, status, payment_requirement, payment_status, service_snapshot, frizi_professionals(display_name)')
+      .eq('client_id', client.id)
+      .order('starts_at', { ascending: true })
+      .limit(100);
+    if (error) return sendJson(response, 500, { error: error.message });
+    return sendJson(response, 200, { appointments: (data || []).map(mapAppointment) });
+  }
+
+  try {
+    const payload = await readJson(request);
+    const professionalId = normalizeProfessionalId(String(payload.professionalId || '').trim());
+    const serviceId = String(payload.serviceId || '').trim();
+    const scheduledStart = new Date(String(payload.scheduledStart || ''));
+
+    if (!/^[0-9a-f-]{36}$/i.test(professionalId)) {
+      return sendJson(response, 400, { error: 'Choose a valid professional.' });
+    }
+    if (!serviceId || Number.isNaN(scheduledStart.getTime())) {
+      return sendJson(response, 400, { error: 'Choose a valid service and appointment time.' });
+    }
+
+    const { data: professionalResult, error: professionalError } = await supabase
+      .from('frizi_professionals')
+      .select('id, display_name, public_profile_status, bookable, subscription_status, booking_settings')
+      .eq('id', professionalId)
+      .maybeSingle();
+
+    const professional = professionalResult as ProfessionalRow | null;
+
+    if (professionalError) throw professionalError;
+    if (!professional || professional.public_profile_status !== 'published' || !professional.bookable || !isActiveSubscription(professional.subscription_status)) {
+      return sendJson(response, 409, { error: 'This professional is not available for online booking right now.' });
+    }
+
+    const { data: serviceResult, error: serviceError } = await supabase
+      .from('frizi_services')
+      .select(
+        'id, professional_id, name, public_description, base_price_cents, currency, duration_minutes, pricing_type, deposit_type, deposit_amount_cents, deposit_percentage, buffer_before_minutes, buffer_after_minutes, service_metadata',
+      )
+      .eq('id', serviceId)
+      .eq('professional_id', professionalId)
+      .eq('active', true)
+      .eq('online_booking_enabled', true)
+      .maybeSingle();
+
+    const service = serviceResult as ServiceRow | null;
+
+    if (serviceError) throw serviceError;
+    if (!service) return sendJson(response, 409, { error: 'This service is not available for online booking.' });
+
+    const durationMinutes = service.duration_minutes || 60;
+    const startsAt = addMinutes(scheduledStart, -(service.buffer_before_minutes || 0));
+    const endsAt = addMinutes(scheduledStart, durationMinutes + (service.buffer_after_minutes || 0));
+
+    if (!isWithinAvailability(professional, scheduledStart, addMinutes(scheduledStart, durationMinutes))) {
+      return sendJson(response, 409, { error: 'That time is no longer available. Please choose another time.' });
+    }
+
+    const displayName = String(userResult.user.user_metadata?.full_name || userResult.user.email || 'Frizi client').trim();
+    const { firstName, lastName } = splitName(displayName);
+    const now = new Date().toISOString();
+
+    const { data: profile, error: profileError } = await supabase
+      .from('frizi_profiles')
+      .upsert(
+        {
+          auth_user_id: userResult.user.id,
+          account_type: 'client',
+          display_name: displayName,
+          email: userResult.user.email,
+          status: 'active',
+          updated_at: now,
+        },
+        { onConflict: 'auth_user_id' },
+      )
+      .select('id')
+      .single();
+    if (profileError) throw profileError;
+
+    const { data: existingClient, error: existingClientError } = await supabase.from('frizi_clients').select('id').eq('profile_id', profile.id).maybeSingle();
+    if (existingClientError) throw existingClientError;
+
+    const clientMutation = {
+      profile_id: profile.id,
+      preferred_name: displayName,
+      first_name: firstName,
+      last_name: lastName,
+      email: userResult.user.email,
+      account_claimed_at: now,
+      updated_at: now,
+    };
+
+    const { data: client, error: clientError } = existingClient
+      ? await supabase.from('frizi_clients').update(clientMutation).eq('id', existingClient.id).select('id').single()
+      : await supabase.from('frizi_clients').insert(clientMutation).select('id').single();
+    if (clientError) throw clientError;
+
+    const paymentRequirement = paymentRequirementFor(service);
+    const paymentRequiredCents = paymentRequiredCentsFor(service, paymentRequirement);
+    if (paymentRequiredCents > 0) {
+      return sendJson(response, 409, { error: 'This service requires online payment before booking. Frizi payment checkout is not available for this service yet.' });
+    }
+    const status = appointmentStatusFor(paymentRequirement);
+    const paymentStatus = paymentRequiredCents > 0 ? 'awaiting_payment' : 'not_required';
+
+    const serviceSnapshot = {
+      id: service.id,
+      name: service.name,
+      description: service.public_description,
+      price_cents: service.base_price_cents,
+      currency: service.currency,
+      duration_minutes: durationMinutes,
+      pricing_type: service.pricing_type,
+    };
+
+    const { data: appointment, error: appointmentError } = await supabase
+      .from('frizi_appointments')
+      .insert({
+        client_id: client.id,
+        professional_id: professional.id,
+        service_id: service.id,
+        service_snapshot: serviceSnapshot,
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt.toISOString(),
+        status,
+        payment_status: paymentStatus,
+        booking_source: 'client_app',
+        client_notes: String(payload.clientNotes || '').trim() || null,
+        reference_photo_urls: Array.isArray(payload.referencePhotoUrls) ? payload.referencePhotoUrls.slice(0, 8) : [],
+        payment_requirement: paymentRequirement,
+        payment_required_cents: paymentRequiredCents,
+        updated_at: now,
+      })
+      .select('id, professional_id, client_id, service_id, starts_at, ends_at, status, payment_requirement, payment_status, service_snapshot')
+      .single();
+
+    if (appointmentError) {
+      if ((appointmentError as { code?: string }).code === '23P01') {
+        return sendJson(response, 409, { error: 'That time was just booked. Please choose another time.' });
+      }
+      throw appointmentError;
+    }
+
+    const { error: relationshipError } = await supabase
+      .from('frizi_client_professional_relationships')
+      .upsert(
+        {
+          client_id: client.id,
+          professional_id: professional.id,
+          status: 'active',
+          source: 'booking',
+          account_claimed_status: 'claimed',
+          next_appointment_at: startsAt.toISOString(),
+          last_service: service.name,
+          updated_at: now,
+        },
+        { onConflict: 'client_id,professional_id' },
+      );
+    if (relationshipError) throw relationshipError;
+
+    return sendJson(response, 201, { appointment: { ...mapAppointment({ ...appointment, professional_name: professional.display_name }), professional: professional.display_name } });
+  } catch (error) {
+    return sendJson(response, 500, {
+      error: error instanceof Error ? error.message : 'Appointment booking failed.',
+    });
+  }
+}

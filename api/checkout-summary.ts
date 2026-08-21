@@ -2,6 +2,8 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { calculateAppointmentCheckout } from './_frizi-pricing.mjs';
+import { isDemoRequest, sendJson, sendProductionDisabled } from './_environment.mjs';
+import { enforceRateLimit } from './_rate-limit.mjs';
 
 type SummaryRequest = {
   appointmentId?: string;
@@ -14,12 +16,6 @@ type SummaryRequest = {
   customTipAmount?: string;
   currency?: string;
 };
-
-function sendJson(response: ServerResponse, status: number, payload: unknown) {
-  response.statusCode = status;
-  response.setHeader('Content-Type', 'application/json');
-  response.end(JSON.stringify(payload));
-}
 
 async function readJson(request: IncomingMessage & { body?: unknown }): Promise<SummaryRequest> {
   if (request.body && typeof request.body === 'object') {
@@ -37,6 +33,12 @@ async function readJson(request: IncomingMessage & { body?: unknown }): Promise<
 export default async function handler(request: IncomingMessage & { body?: unknown }, response: ServerResponse) {
   if (request.method !== 'POST') {
     return sendJson(response, 405, { error: 'Method not allowed' });
+  }
+
+  if (!(await enforceRateLimit(request, response, 'checkout'))) return;
+
+  if (!isDemoRequest(request)) {
+    return sendProductionDisabled(response, 'Appointment checkout preview');
   }
 
   try {

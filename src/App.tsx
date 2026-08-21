@@ -17,14 +17,21 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  Trash2,
   User,
 } from 'lucide-react';
+import QRCode from 'qrcode';
+import type { Session as SupabaseSession, User as SupabaseUser } from '@supabase/supabase-js';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { createClient, isSupabaseConfigured } from './utils/supabase/client';
 
 type Service = {
+  id?: string;
   name: string;
   duration: string;
   price: string;
+  durationMinutes?: number;
+  paymentRequirement?: string;
 };
 
 type Review = {
@@ -58,39 +65,21 @@ type Professional = {
 };
 
 type BookingRequest = {
+  id?: string;
   professionalId: string;
   professional: string;
   service: string;
   serviceId: string;
   servicePriceCents: number;
+  date: string;
   time: string;
   eventId: string;
+  status: 'pending' | 'confirmed' | 'declined' | 'cancelled' | 'completed';
+  scheduledStart?: string;
+  scheduledEnd?: string;
+  paymentRequirement?: string;
+  paymentStatus?: string;
 };
-
-type CheckoutSummary = {
-  appointmentId: string;
-  customerId: string;
-  professionalId: string;
-  professionalName: string;
-  salonId: string;
-  salonName: string;
-  services: Array<{ id: string; name: string; priceCents: number; currency: string }>;
-  serviceSubtotalCents: number;
-  promotion: null | { id: string; name: string; code: string; discountType: string; discountValue: number };
-  discountCents: number;
-  discountedServiceSubtotalCents: number;
-  taxCents: number;
-  depositCreditCents: number;
-  tipSelection: string;
-  tipBasisCents: number;
-  tipCents: number;
-  amountDueCents: number;
-  currency: string;
-  quoteExpiresAt: string;
-  tipOptions: Array<{ percent: number; amountCents: number }>;
-};
-
-type TipChoice = 15 | 18 | 20 | 25 | 'custom' | 'none';
 
 type CommerceCatalogueItem = {
   product: {
@@ -178,11 +167,14 @@ type CommerceCartSummary = {
   complianceWarning: string;
 };
 
-const taxRate = 0.13;
-const defaultTipChoice: TipChoice = 18;
 const clientSessionStorageKey = 'frizi-client-session';
+const pendingBookingStorageKey = 'frizi-client-pending-booking';
+const clientOAuthContextStorageKey = 'frizi-client-oauth-context';
+const locationPromptStorageKey = 'frizi-client-location-prompt-complete';
 
 type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
+type AccountNavKey = Exclude<ClientNavKey, 'products'>;
+type ClientAuthIntent = 'default' | 'promo' | 'booking' | AccountNavKey;
 
 type FilterState = {
   distanceKm: number;
@@ -194,6 +186,53 @@ type FilterState = {
 type ClientSession = {
   name: string;
   email: string;
+  accessToken?: string;
+};
+
+type ClientPhoto = {
+  id: string;
+  imagePath: string;
+  imageUrl: string;
+  label: string;
+  note: string;
+  photoType: 'profile' | 'hair_history' | 'example_reference';
+};
+
+type ClientPassport = {
+  id: string;
+  status: string;
+  passportUrl: string;
+  expiresAt?: string | null;
+};
+
+function isAccountNavIntent(intent: ClientAuthIntent): intent is AccountNavKey {
+  return intent === 'appointments' || intent === 'saved' || intent === 'profile';
+}
+
+function readClientOAuthContext() {
+  try {
+    const rawContext = window.sessionStorage.getItem(clientOAuthContextStorageKey);
+    if (!rawContext) return null;
+    const parsed = JSON.parse(rawContext) as { intent?: string; returnPath?: string; hasPendingBooking?: boolean };
+    const intent: ClientAuthIntent = parsed.intent === 'promo' || parsed.intent === 'booking' || isAccountNavIntent(parsed.intent as ClientAuthIntent)
+      ? (parsed.intent as ClientAuthIntent)
+      : 'default';
+    const returnPath = typeof parsed.returnPath === 'string' && parsed.returnPath.startsWith('/') ? parsed.returnPath : '/';
+    return { intent, returnPath, hasPendingBooking: Boolean(parsed.hasPendingBooking) };
+  } catch {
+    return null;
+  }
+}
+
+type LiveInvite = {
+  invitation: {
+    id: string;
+    token: string;
+    source: string;
+    expiresAt: string | null;
+  };
+  professional: Professional;
+  mobilePrompt: string;
 };
 
 type BrowserSpeechRecognition = {
@@ -225,22 +264,6 @@ declare global {
   }
 }
 
-type InvitationFixture = {
-  token: string;
-  professionalId: string;
-  openedEvent: string;
-  offer: {
-    id: string;
-    title: string;
-    type: string;
-    value: string;
-    expiresAt: string;
-    terms: string;
-    status: 'live' | 'paused' | 'expired';
-    redeemedClientKeys: string[];
-  };
-};
-
 type InfoPage = {
   title: string;
   eyebrow: string;
@@ -249,9 +272,6 @@ type InfoPage = {
   cta?: { label: string; href: string };
 };
 
-const sampleQuery =
-  'I am looking for a muslim friendly barber near me who is good at fades.';
-
 const defaultFilters: FilterState = {
   distanceKm: 5,
   serviceType: 'Any service',
@@ -259,8 +279,31 @@ const defaultFilters: FilterState = {
   accessibility: 'Any accessibility',
 };
 
-const serviceTypeOptions = ['Any service', 'Haircut', 'Fades', 'Curls', 'Color', 'Protective styles', 'Blowout'];
-const specialtyOptions = ['Any specialty', 'Fine hair', 'Curly cuts', 'Fades', 'Protective styles', 'Color consults', 'Pixies'];
+const serviceTypeOptions = [
+  'Any service',
+  'Hairstylist',
+  'Barber',
+  'Colourist',
+  'Beard Grooming',
+  'Extensions',
+  'Braids',
+  'Curly Hair',
+  'Bridal Hair',
+  'Manicure',
+  'Lashes',
+  'Brows',
+];
+const specialtyOptions = [
+  'Any specialty',
+  'Fine hair',
+  'Curly Hair',
+  'Barber',
+  'Short cuts',
+  'Colourist',
+  'Extensions',
+  'Braids',
+  'Bridal Hair',
+];
 const accessibilityOptions = [
   'Any accessibility',
   'Quiet appointment',
@@ -270,384 +313,260 @@ const accessibilityOptions = [
   'Fragrance aware',
 ];
 
-const invitationFixtures: InvitationFixture[] = [
+const searchSuggestionCategories = [
   {
-    token: 'mara-chen-frizi25',
-    professionalId: 'mara',
-    openedEvent: 'client_invite_opened:mara-chen-frizi25',
-    offer: {
-      id: 'offer_mara_intro_25',
-      title: 'Get 25% off your next appointment',
-      type: 'Percentage discount',
-      value: '25%',
-      expiresAt: '2026-08-15',
-      terms: 'One introductory redemption per invited client. Minimum service value $50 CAD. Not combinable with other discounts.',
-      status: 'live',
-      redeemedClientKeys: ['existing-redeemed-demo'],
-    },
+    label: 'Hairstylist',
+    query: 'Hairstylist',
+    aliases: ['stylist', 'haircut', 'hair services', 'blowout', 'cut'],
   },
   {
-    token: 'mara-paused-demo',
-    professionalId: 'mara',
-    openedEvent: 'client_invite_opened:mara-paused-demo',
-    offer: {
-      id: 'offer_mara_paused',
-      title: 'Free curl routine card',
-      type: 'Complimentary add-on',
-      value: '$0 CAD add-on',
-      expiresAt: '2026-08-15',
-      terms: 'Paused by the professional.',
-      status: 'paused',
-      redeemedClientKeys: [],
-    },
+    label: 'Barber',
+    query: 'Barber',
+    aliases: ['barbering', "men's cuts", 'mens cuts', 'fades', 'beard services'],
   },
-];
+  {
+    label: 'Colourist',
+    query: 'Colourist',
+    aliases: ['colour', 'color', 'highlights', 'balayage', 'colour correction', 'color correction'],
+  },
+  { label: 'Stylist', query: 'Stylist', aliases: ['hairstylist', 'hair professional', 'cut and style'] },
+  { label: 'Beard Grooming', query: 'Beard Grooming', aliases: ['beard', 'barbering', 'line up', 'trim'] },
+  { label: 'Manicure', query: 'Manicure', aliases: ['nails', 'gel nails', 'nail care'] },
+  { label: 'Lashes', query: 'Lashes', aliases: ['lash extensions', 'lash lift'] },
+  { label: 'Brows', query: 'Brows', aliases: ['brow shaping', 'brow lamination'] },
+  { label: 'Extensions', query: 'Extensions', aliases: ['hair extensions', 'weave'] },
+  { label: 'Braids', query: 'Braids', aliases: ['protective styles', 'braiding'] },
+  { label: 'Curly Hair', query: 'Curly Hair', aliases: ['curls', 'curly cuts', 'texture'] },
+  { label: 'Bridal Hair', query: 'Bridal Hair', aliases: ['wedding hair', 'updo', 'formal styling'] },
+] as const;
 
-const completedAppointmentHistory = [
-  {
-    id: 'hist_mara_001',
-    professional: 'Mara Chen',
-    service: 'Dry curl cut',
-    date: 'Jul 14, 2026',
-    servicePriceCents: 11500,
-    tipCents: 2300,
-    reviewStatus: 'Review left',
-    photosAttached: 2,
-  },
-  {
-    id: 'hist_omar_001',
-    professional: 'Omar Rahman',
-    service: 'Fade and lineup',
-    date: 'Jun 28, 2026',
-    servicePriceCents: 5200,
-    tipCents: 936,
-    reviewStatus: 'Review pending',
-    photosAttached: 1,
-  },
-];
+const completedAppointmentHistory = [] as Array<{
+  id: string;
+  professional: string;
+  service: string;
+  date: string;
+  servicePriceCents: number;
+  tipCents: number;
+  reviewStatus: string;
+  photosAttached: number;
+}>;
+const clientProfilePhoto = '';
+const clientHairPhotos = [] as ClientPhoto[];
+const clientExamplePhotos = [] as ClientPhoto[];
 
-const clientProfilePhoto =
-  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=700&q=80';
 
-const clientHairPhotos = [
-  {
-    id: 'hair_ari_after_001',
-    imageUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=80',
-    label: 'Last low fade',
-    note: 'Synced after a completed appointment with consent.',
-  },
-  {
-    id: 'hair_ari_after_002',
-    imageUrl: 'https://images.unsplash.com/photo-1622286346003-cbc8b8e30a58?auto=format&fit=crop&w=900&q=80',
-    label: 'Texture reference from last visit',
-    note: 'Professional-updated haircut history, visible to both sides.',
-  },
-];
+type LiveProfessionalRow = {
+  id: string;
+  display_name: string;
+  studio_name: string | null;
+  bio: string | null;
+  profile_photo_url: string | null;
+  hero_photo_url: string | null;
+  specialties: string[] | null;
+  primary_specialty: string | null;
+  booking_settings: Record<string, unknown> | null;
+};
 
-const clientExamplePhotos = [
-  {
-    id: 'example_ari_low_fade',
-    imageUrl: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=900&q=80',
-    label: 'Low fade goal',
-    note: 'Natural neckline, not squared off.',
-  },
-  {
-    id: 'example_ari_texture',
-    imageUrl: 'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=900&q=80',
-    label: 'Top texture',
-    note: 'Keep movement on top without shiny gel.',
-  },
-];
+type LiveLocationRow = {
+  professional_id: string;
+  city: string;
+  province: string;
+  service_radius_km: number | null;
+};
 
-const professionals: Professional[] = [
-  {
-    id: 'omar',
-    name: 'Omar Rahman',
-    role: 'Barber and fade specialist',
-    studio: 'Civic Barbering',
-    neighborhood: 'Riverside',
-    distance: '1.4 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=900&q=85',
-    rating: 4.97,
-    reviews: 312,
-    repeatRate: '84%',
-    nextAvailable: 'Today 5:15 PM',
-    specialties: ['Skin fades', 'Low fades', 'Beard lineups', 'Textured crops'],
-    accommodations: ['Muslim friendly', 'Private room on request', 'Prayer-time aware', 'Quiet appointment'],
-    searchTerms: ['muslim', 'barber', 'fade', 'fades', 'beard', 'men', 'private', 'near me'],
-    whyMatch:
-      'Best match for Muslim-friendly barber care, fade reviews, and same-day availability near you.',
-    bio: 'Omar keeps detailed cut notes for guards, taper shape, neckline preference, and beard lineups so your next visit starts with context.',
-    services: [
-      { name: 'Fade and lineup', duration: '45 min', price: '$52' },
-      { name: 'Fade, beard, and wash', duration: '70 min', price: '$78' },
-      { name: 'Private-room haircut', duration: '60 min', price: '$65' },
-    ],
-    bookingSlots: ['Today 5:15 PM', 'Tomorrow 10:30 AM', 'Tomorrow 4:45 PM', 'Fri 2:00 PM'],
-    clientReviews: [
-      {
-        name: 'Yusuf',
-        rating: 5,
-        text: 'Omar understood exactly what I meant by a low fade and kept the beard line natural.',
-      },
-      {
-        name: 'Samira',
-        rating: 5,
-        text: 'The private-room option made booking for my son feel easy and respectful.',
-      },
-    ],
-    promotion: 'New clients get 10% off a fade and beard combo this week.',
-  },
-  {
-    id: 'layla',
-    name: 'Layla Brooks',
-    role: 'Inclusive barber and fade specialist',
-    studio: 'East Room Barber',
-    neighborhood: 'Leslieville',
-    distance: '2.1 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1592647420148-bfcc177e2117?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=900&q=85',
-    rating: 4.95,
-    reviews: 176,
-    repeatRate: '81%',
-    nextAvailable: 'Today 6:00 PM',
-    specialties: ['Skin fades', 'Drop fades', 'Scissor-over-comb', 'Curly taper cuts'],
-    accommodations: ['Muslim friendly', 'Women-friendly barbering', 'Private room on request', 'Quiet appointment'],
-    searchTerms: ['muslim', 'friendly', 'barber', 'fade', 'fades', 'women', 'private', 'curly taper', 'near me'],
-    whyMatch:
-      'Strong match for clients who want a Muslim-friendly barber, clean fades, and a calm private-room option.',
-    bio: 'Layla works with clients who want barber-level fades in a respectful, low-pressure space. She keeps notes on guard lengths, neckline shape, product preferences, and privacy needs.',
-    services: [
-      { name: 'Skin fade', duration: '50 min', price: '$58' },
-      { name: 'Fade and curl taper', duration: '65 min', price: '$74' },
-      { name: 'Private-room cut', duration: '60 min', price: '$68' },
-    ],
-    bookingSlots: ['Today 6:00 PM', 'Tomorrow 1:15 PM', 'Thu 5:30 PM', 'Sat 10:00 AM'],
-    clientReviews: [
-      {
-        name: 'Amina',
-        rating: 5,
-        text: 'Layla made the private-room request feel normal and gave me the clean taper I wanted.',
-      },
-      {
-        name: 'Noah',
-        rating: 5,
-        text: 'She remembered the exact guard blend from my last cut and fixed the weight on top.',
-      },
-    ],
-    promotion: 'First fade appointment includes a complimentary neckline cleanup within 10 days.',
-  },
-  {
-    id: 'malik',
-    name: 'Malik Stone',
-    role: 'Fade, lineup, and textured cut barber',
-    studio: 'Block 9 Grooming',
-    neighborhood: 'Dundas West',
-    distance: '3.4 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1622286346003-cbc8b8e30a58?auto=format&fit=crop&w=900&q=85',
-    rating: 4.92,
-    reviews: 264,
-    repeatRate: '86%',
-    nextAvailable: 'Tomorrow 9:45 AM',
-    specialties: ['Mid fades', 'Burst fades', 'Beard shaping', 'Textured tops'],
-    accommodations: ['Muslim friendly', 'Prayer-time aware', 'Fragrance aware', 'Same-day booking'],
-    searchTerms: ['muslim', 'barber', 'fade', 'fades', 'beard', 'lineup', 'men', 'textured', 'near me'],
-    whyMatch:
-      'Great option for fade searches with beard work, textured tops, and appointment notes that carry forward.',
-    bio: 'Malik specializes in sharp fades that still grow out cleanly. He documents blend height, neckline preference, beard shape, and styling product tolerance for repeat bookings.',
-    services: [
-      { name: 'Fade and lineup', duration: '45 min', price: '$50' },
-      { name: 'Fade and beard shape', duration: '65 min', price: '$76' },
-      { name: 'Textured crop cut', duration: '55 min', price: '$62' },
-    ],
-    bookingSlots: ['Tomorrow 9:45 AM', 'Tomorrow 6:30 PM', 'Fri 12:30 PM', 'Sun 11:00 AM'],
-    clientReviews: [
-      {
-        name: 'Bilal',
-        rating: 5,
-        text: 'The fade was sharp without going too high, and the beard line stayed natural.',
-      },
-      {
-        name: 'Andre',
-        rating: 5,
-        text: 'Malik actually used my old photo notes and matched the cut better than I expected.',
-      },
-    ],
-    promotion: 'Book a fade and beard shape together and get $8 off this week.',
-  },
-  {
-    id: 'serena',
-    name: 'Serena Vale',
-    role: 'Short cuts, fades, and gender-neutral barbering',
-    studio: 'Vale Chair',
-    neighborhood: 'Kensington Market',
-    distance: '4.2 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1562004760-aceed7bb0fe3?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1544717301-9cdcb1f5940f?auto=format&fit=crop&w=900&q=85',
-    rating: 4.9,
-    reviews: 119,
-    repeatRate: '74%',
-    nextAvailable: 'Friday 4:15 PM',
-    specialties: ['Soft fades', 'Short cuts', 'Gender-neutral cuts', 'Low-maintenance texture'],
-    accommodations: ['Queer friendly', 'Muslim friendly', 'Consult-first cuts', 'Quiet appointment'],
-    searchTerms: ['muslim', 'friendly', 'barber', 'fade', 'fades', 'short cuts', 'quiet', 'gender neutral', 'near me'],
-    whyMatch:
-      'Good match for clients who want a softer fade, a consult-first appointment, and a comfortable inclusive chair.',
-    bio: 'Serena blends barbering and salon cutting for clients who want short shapes that feel intentional, not rushed. She is especially good with soft fades, grow-out plans, and reference photos.',
-    services: [
-      { name: 'Soft fade', duration: '55 min', price: '$60' },
-      { name: 'Short cut reset', duration: '70 min', price: '$82' },
-      { name: 'Consult and cut', duration: '75 min', price: '$88' },
-    ],
-    bookingSlots: ['Friday 4:15 PM', 'Sat 1:00 PM', 'Mon 10:45 AM', 'Tue 2:30 PM'],
-    clientReviews: [
-      {
-        name: 'Riley',
-        rating: 5,
-        text: 'Serena listened first and gave me a fade that felt like me, not a template.',
-      },
-      {
-        name: 'Hana',
-        rating: 5,
-        text: 'The appointment was quiet and easy, and she saved exactly what to repeat next time.',
-      },
-    ],
-    promotion: 'New clients can add a 15-minute shape consult at no extra charge.',
-  },
-  {
-    id: 'mara',
-    name: 'Mara Chen',
-    role: 'Curl cutter and colorist',
-    studio: 'Northline Studio',
-    neighborhood: 'West Queen West',
-    distance: '1.8 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1605497788044-5a32c7078486?auto=format&fit=crop&w=900&q=85',
-    rating: 4.98,
-    reviews: 188,
-    repeatRate: '72%',
-    nextAvailable: 'Tomorrow 12:45 PM',
-    specialties: ['Dry curl cuts', 'Fine hair shaping', 'Color consults', 'Wash-day routines'],
-    accommodations: ['Queer friendly', 'Quiet appointment', 'On public transit', 'Photo history'],
-    searchTerms: ['curl', 'curly', 'fine hair', 'color', 'quiet', 'women', 'natural curls'],
-    whyMatch:
-      'Connected to the Frizi Pro demo profile, including reviews, promotion, and available bookings.',
-    bio: 'Mara is the professional shown in the Frizi Pro app. Her client notes, photo history, reviews, promotions, and booking requests sync into the pro-side demo.',
-    services: [
-      { name: 'Dry curl cut', duration: '75 min', price: '$115' },
-      { name: 'Fine hair shaping', duration: '60 min', price: '$95' },
-      { name: 'Curl routine consult', duration: '40 min', price: '$55' },
-    ],
-    bookingSlots: ['Tomorrow 12:45 PM', 'Wed 2:15 PM', 'Thu 11:30 AM', 'Sat 12:00 PM'],
-    clientReviews: [
-      {
-        name: 'Nora',
-        rating: 5,
-        text: 'Mara remembered that I do not like heavy product and my curls lasted longer than usual.',
-      },
-      {
-        name: 'Jason',
-        rating: 5,
-        text: 'The photo notes made it simple to explain what I liked from the last appointment.',
-      },
-    ],
-    promotion: 'Free curl routine card with any first appointment before August 15.',
-  },
-  {
-    id: 'sol',
-    name: 'Sol Amari',
-    role: 'Protective style artist',
-    studio: 'The Annex Lofts',
-    neighborhood: 'The Annex',
-    distance: '4.9 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1605980776566-0486c3ac7617?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1580618672591-eb180b1a973f?auto=format&fit=crop&w=900&q=85',
-    rating: 4.96,
-    reviews: 141,
-    repeatRate: '78%',
-    nextAvailable: 'Friday 9:00 AM',
-    specialties: ['Protective styles', 'Loc maintenance', 'Scalp care', 'Natural curls'],
-    accommodations: ['Hijab-friendly space', 'Private suite', 'Fragrance aware', 'Textured hair'],
-    searchTerms: ['protective', 'locs', 'braids', 'hijab', 'private', 'textured', 'scalp'],
-    whyMatch:
-      'Strong match for private-suite appointments, textured hair, and consent-first photo sharing.',
-    bio: 'Sol focuses on protective styles and loc care with clear maintenance plans and privacy-first portfolio consent.',
-    services: [
-      { name: 'Protective style consult', duration: '45 min', price: '$65' },
-      { name: 'Loc maintenance', duration: '120 min', price: '$180' },
-      { name: 'Scalp care session', duration: '50 min', price: '$80' },
-    ],
-    bookingSlots: ['Friday 9:00 AM', 'Friday 1:00 PM', 'Sat 11:30 AM', 'Tue 10:00 AM'],
-    clientReviews: [
-      {
-        name: 'Imani',
-        rating: 5,
-        text: 'Sol did not rush the consult, and my scalp felt considered the entire time.',
-      },
-      {
-        name: 'Leah',
-        rating: 5,
-        text: 'I approved one photo for their portfolio and kept the rest private. Very clear consent.',
-      },
-    ],
-    promotion: 'Free scalp oil sample with protective style bookings this month.',
-  },
-  {
-    id: 'nina',
-    name: 'Nina Patel',
-    role: 'Fine hair and precision cut specialist',
-    studio: 'Golden Hour Hair',
-    neighborhood: 'Little Italy',
-    distance: '2.6 km',
-    heroImage:
-      'https://images.unsplash.com/photo-1519699047748-de8e457a634e?auto=format&fit=crop&w=1200&q=85',
-    detailImage:
-      'https://images.unsplash.com/photo-1595476108010-b4d1f102b1b1?auto=format&fit=crop&w=900&q=85',
-    rating: 4.94,
-    reviews: 205,
-    repeatRate: '76%',
-    nextAvailable: 'Tomorrow 3:30 PM',
-    specialties: ['Fine hair', 'Bobs', 'Pixies', 'Soft layers'],
-    accommodations: ['Quiet appointment', 'Fragrance aware', 'Consult-first cuts', 'On public transit'],
-    searchTerms: ['fine hair', 'thin hair', 'bob', 'pixie', 'layers', 'quiet'],
-    whyMatch:
-      'Helpful for clients who need precise shaping and do not want their fine hair over-thinned.',
-    bio: 'Nina works with fine density, soft grow-out shapes, and haircut plans that avoid unnecessary thinning.',
-    services: [
-      { name: 'Fine hair shaping', duration: '60 min', price: '$88' },
-      { name: 'Precision bob', duration: '75 min', price: '$120' },
-      { name: 'Pixie maintenance', duration: '45 min', price: '$70' },
-    ],
-    bookingSlots: ['Tomorrow 3:30 PM', 'Thu 10:15 AM', 'Fri 5:00 PM', 'Sat 9:45 AM'],
-    clientReviews: [
-      {
-        name: 'Claire',
-        rating: 5,
-        text: 'Nina knew how to make my hair look fuller without cutting too much off.',
-      },
-      {
-        name: 'Avery',
-        rating: 5,
-        text: 'The grow-out notes helped us repeat the exact length that worked.',
-      },
-    ],
-    promotion: 'Complimentary bang trim within three weeks of a precision cut.',
-  },
-];
+type LiveServiceRow = {
+  id: string;
+  professional_id: string;
+  name: string;
+  public_description: string | null;
+  base_price_cents: number;
+  pricing_type: string;
+  duration_minutes: number | null;
+  deposit_type: string;
+  deposit_amount_cents: number;
+  deposit_percentage: number;
+  service_metadata: Record<string, unknown> | null;
+};
+
+function formatServicePrice(service: LiveServiceRow) {
+  if (service.pricing_type === 'free_consultation') return 'Free';
+  if (service.pricing_type === 'price_varies') return 'Varies';
+  const dollars = Math.round(service.base_price_cents / 100);
+  return service.pricing_type === 'starting_at' ? `From $${dollars}` : `$${dollars}`;
+}
+
+function liveProfessionalSearchTerms(profile: LiveProfessionalRow, location?: LiveLocationRow) {
+  return [
+    profile.display_name,
+    profile.studio_name || '',
+    profile.bio || '',
+    profile.primary_specialty || '',
+    ...(profile.specialties || []),
+    location?.city || '',
+    location?.province || '',
+    'book online',
+    'frizi professional',
+  ].filter(Boolean);
+}
+
+function taxonomyTermsForLiveProfile(profile: LiveProfessionalRow, services: LiveServiceRow[]) {
+  const rawTerms = [
+    profile.primary_specialty || '',
+    ...(profile.specialties || []),
+    ...services.flatMap((service) => [service.name, service.public_description || '']),
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const aliases: string[] = [];
+  if (/\b(barber|fade|taper|beard|men|mens|line up)\b/.test(rawTerms)) {
+    aliases.push('Barber', 'barbering', "men's cuts", 'fades', 'Beard Grooming', 'beard services');
+  }
+  if (/\b(colou?r|highlight|balayage|toner|blond|correction)\b/.test(rawTerms)) {
+    aliases.push('Colourist', 'colour', 'color', 'highlights', 'balayage', 'colour correction');
+  }
+  if (/\b(curl|curly|texture|wave)\b/.test(rawTerms)) {
+    aliases.push('Curly Hair', 'curls', 'curly cuts', 'texture');
+  }
+  if (/\b(extension|weave)\b/.test(rawTerms)) aliases.push('Extensions', 'hair extensions');
+  if (/\b(braid|protective)\b/.test(rawTerms)) aliases.push('Braids', 'protective styles');
+  if (/\b(bride|bridal|wedding|updo)\b/.test(rawTerms)) aliases.push('Bridal Hair', 'wedding hair');
+  if (/\b(manicure|nail)\b/.test(rawTerms)) aliases.push('Manicure', 'nails');
+  if (/\b(lash|lashes)\b/.test(rawTerms)) aliases.push('Lashes', 'lash extensions');
+  if (/\b(brow|brows)\b/.test(rawTerms)) aliases.push('Brows', 'brow shaping');
+  if (/\b(hair|cut|style|blowout|stylist)\b/.test(rawTerms)) aliases.push('Hairstylist', 'Stylist', 'hair services');
+
+  return Array.from(new Set(aliases));
+}
+
+async function loadLiveProfessionals(): Promise<Professional[]> {
+  if (!isSupabaseConfigured) return [];
+
+  const supabase = createClient();
+  const { data: liveProfiles, error: profileError } = await supabase
+    .from('frizi_professionals')
+    .select('id, display_name, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, booking_settings')
+    .eq('public_profile_status', 'published')
+    .eq('bookable', true)
+    .in('subscription_status', ['active', 'trialing'])
+    .order('updated_at', { ascending: false })
+    .limit(12);
+
+  if (profileError) throw profileError;
+  if (!liveProfiles?.length) return [];
+
+  const ids = liveProfiles.map((profile: LiveProfessionalRow) => profile.id);
+  const [{ data: locations, error: locationError }, { data: services, error: serviceError }] = await Promise.all([
+    supabase
+      .from('frizi_professional_locations')
+      .select('professional_id, city, province, service_radius_km')
+      .in('professional_id', ids)
+      .eq('primary_location', true)
+      .eq('active', true),
+    supabase
+      .from('frizi_services')
+      .select('id, professional_id, name, public_description, base_price_cents, pricing_type, duration_minutes, deposit_type, deposit_amount_cents, deposit_percentage, service_metadata')
+      .in('professional_id', ids)
+      .eq('active', true)
+      .eq('online_booking_enabled', true)
+      .order('display_order', { ascending: true }),
+  ]);
+
+  if (locationError) throw locationError;
+  if (serviceError) throw serviceError;
+
+  return (liveProfiles as LiveProfessionalRow[])
+    .flatMap((profile): Professional[] => {
+    const location = (locations as LiveLocationRow[] | null)?.find((candidate) => candidate.professional_id === profile.id);
+    const profileServices = ((services as LiveServiceRow[] | null) || []).filter((service) => service.professional_id === profile.id);
+    const specialties = profile.specialties?.length ? profile.specialties : [profile.primary_specialty || 'Hair services'];
+    if (!profileServices.length) return [];
+    const bookingSlots = buildSlotsFromBookingSettings(profile.booking_settings, profileServices[0]?.duration_minutes || 60);
+    const searchTerms = [
+      ...liveProfessionalSearchTerms(profile, location),
+      ...profileServices.flatMap((service) => [service.name, service.public_description || '']),
+      ...taxonomyTermsForLiveProfile(profile, profileServices),
+    ].filter(Boolean);
+
+    return [{
+      id: `live-${profile.id}`,
+      name: profile.display_name,
+      role: profile.primary_specialty || 'Frizi professional',
+      studio: profile.studio_name || 'Independent professional',
+      neighborhood: location ? `${location.city}, ${location.province}` : 'Local area',
+      distance: location?.city ? location.city : 'Local area',
+      heroImage: profile.hero_photo_url || profile.profile_photo_url || '/frizi-icon.png',
+      detailImage: profile.profile_photo_url || profile.hero_photo_url || '/frizi-icon.png',
+      rating: 0,
+      reviews: 0,
+      repeatRate: 'New',
+      nextAvailable: 'Request a time',
+      specialties,
+      accommodations: ['Book online', 'Frizi verified profile'],
+      searchTerms,
+      whyMatch: profile.studio_name || 'Independent professional',
+      bio: profile.bio || 'This professional has not added a bio yet.',
+      services: profileServices.map((service) => ({
+            name: service.name,
+            duration: `${service.duration_minutes || 60} min`,
+            price: formatServicePrice(service),
+            id: service.id,
+            durationMinutes: service.duration_minutes || 60,
+            paymentRequirement: paymentRequirementForService(service),
+          })),
+      bookingSlots,
+      clientReviews: [],
+      promotion: '',
+    }];
+    });
+}
+
+function paymentRequirementForService(service: LiveServiceRow) {
+  const metadataRequirement = String(service.service_metadata?.payment_requirement || '');
+  if (['pay_at_appointment', 'frizi_payment_optional', 'deposit_required', 'full_prepayment_required'].includes(metadataRequirement)) {
+    return metadataRequirement;
+  }
+  if (service.deposit_type && service.deposit_type !== 'none') return 'deposit_required';
+  return 'pay_at_appointment';
+}
+
+function buildSlotsFromBookingSettings(settings: Record<string, unknown> | null, durationMinutes: number) {
+  const availability = (settings?.availability || {}) as { shifts?: Array<{ date?: string; startTime?: string; endTime?: string }> };
+  const intervalMinutes = Number((availability as { bookingIntervalMinutes?: number }).bookingIntervalMinutes || 30);
+  const shifts = Array.isArray(availability.shifts) ? availability.shifts : [];
+  const now = new Date();
+  const slots: string[] = [];
+
+  for (const shift of shifts) {
+    if (!shift.date || !shift.startTime || !shift.endTime) continue;
+    const startMinutes = parseClockMinutes(shift.startTime);
+    const endMinutes = parseClockMinutes(shift.endTime);
+    if (startMinutes === null || endMinutes === null) continue;
+
+    for (let cursor = startMinutes; cursor + durationMinutes <= endMinutes; cursor += intervalMinutes) {
+      const slot = dateTimeFromParts(shift.date, cursor);
+      if (slot.getTime() <= now.getTime() + 12 * 60 * 60 * 1000) continue;
+      slots.push(slot.toISOString());
+      if (slots.length >= 24) return slots;
+    }
+  }
+
+  return slots.sort();
+}
+
+function parseClockMinutes(value: string) {
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function dateTimeFromParts(date: string, minutes: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60, 0, 0);
+}
 
 const infoPages: Record<string, InfoPage> = {
   'help/payments': {
@@ -657,10 +576,10 @@ const infoPages: Record<string, InfoPage> = {
       'Frizi is being set up for Stripe Connect so clients can pay for bookings and products in-app while professionals receive payouts through the platform.',
     points: [
       'Frizi Pro is modeled as a $29/month subscription for professionals.',
-      'Online service and product payments carry a 4.5% platform transaction fee in the demo model.',
+      'Online service and product payments may carry a disclosed platform transaction fee when Frizi payments are enabled.',
       'Service payments can use Stripe Connect destination charges with the professional as the connected account and Frizi collecting the application fee.',
       'Standard payouts are planned weekly. Instant payout can be offered as an optional faster transfer with an added 2% fee where Stripe eligibility allows it.',
-      'Live processing requires Stripe secret keys, webhook signing secret, Connect onboarding, and production business verification before real client cards are charged.',
+      'Live processing requires payment onboarding and business verification before client cards are charged.',
     ],
     cta: { label: 'View terms', href: '/policies/terms' },
   },
@@ -682,13 +601,13 @@ const infoPages: Record<string, InfoPage> = {
     eyebrow: 'Policy',
     title: 'Terms of service',
     summary:
-      'These demo terms explain the basic roles in Frizi: clients book and buy through Frizi, professionals manage services and CRM, and Frizi operates the software and payment rails.',
+      'These terms explain the basic roles in Frizi: clients book through Frizi, professionals manage services and CRM, and Frizi operates the software platform.',
     points: [
       'Clients are responsible for entering accurate booking, contact, hair profile, delivery, and payment information.',
       'Professionals are responsible for service descriptions, availability, appointment quality, cancellation handling, and any client-facing claims they publish.',
       'Frizi may collect subscription fees, transaction fees, product margins, and other disclosed fees for use of the platform.',
       'Product prices, availability, and delivery windows can change before checkout is confirmed.',
-      'These demo policies need legal review before production launch.',
+      'Frizi will publish updated policy terms as new payment and product features go live.',
     ],
     cta: { label: 'Privacy policy', href: '/policies/privacy' },
   },
@@ -724,7 +643,7 @@ const infoPages: Record<string, InfoPage> = {
     eyebrow: 'Policy',
     title: 'Returns and refunds',
     summary:
-      'This demo policy separates service payments from product orders and keeps client support routed through Frizi.',
+      'This policy separates service payments from product orders and keeps client support routed through Frizi.',
     points: [
       'Appointment cancellation and refund rules should be shown before the client pays.',
       'Unopened eligible products can be reviewed for return within the displayed return window.',
@@ -765,9 +684,14 @@ function App() {
   const [isListening, setIsListening] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState('');
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authIntent, setAuthIntent] = useState<'default' | 'promo'>('default');
+  const [authIntent, setAuthIntent] = useState<ClientAuthIntent>('default');
   const [clientSession, setClientSession] = useState<ClientSession | null>(null);
   const [openBookingAfterAuth, setOpenBookingAfterAuth] = useState(false);
+  const [liveProfessionals, setLiveProfessionals] = useState<Professional[]>([]);
+  const [clientAppointments, setClientAppointments] = useState<BookingRequest[]>([]);
+  const [bookingError, setBookingError] = useState('');
+  const [locationPromptOpen, setLocationPromptOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem(clientSessionStorageKey);
@@ -779,14 +703,54 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    createClient()
+      .auth.getSession()
+      .then(async ({ data }) => {
+        if (!data.session?.access_token) return;
+        const authContext = readClientOAuthContext();
+        const session = clientSessionFromSupabaseSession(data.session);
+        await ensureCanonicalClientProfile(data.session.user, session.name).catch((error) =>
+          console.warn('[frizi-client-profile-upsert]', error instanceof Error ? error.message : error),
+        );
+        setClientSession(session);
+        window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
+        window.sessionStorage.removeItem(clientOAuthContextStorageKey);
+        const pendingBooking = window.localStorage.getItem(pendingBookingStorageKey);
+        if (pendingBooking) {
+          try {
+            void submitBookingRequest(JSON.parse(pendingBooking) as BookingRequest, session);
+          } finally {
+            window.localStorage.removeItem(pendingBookingStorageKey);
+          }
+        } else {
+          void loadClientAppointments(session);
+          if (authContext?.intent === 'promo') {
+            setOpenBookingAfterAuth(true);
+          } else if (authContext && isAccountNavIntent(authContext.intent)) {
+            setActiveClientNav(authContext.intent);
+          }
+        }
+      })
+      .catch((error) => console.warn('[frizi-client-auth-session]', error instanceof Error ? error.message : error));
+  }, []);
+
+  useEffect(() => {
+    loadLiveProfessionals()
+      .then(setLiveProfessionals)
+      .catch((error) => console.warn('[frizi-live-professionals]', error instanceof Error ? error.message : error));
+  }, []);
+
+  const allProfessionals = liveProfessionals;
   const hasSearched = submittedQuery.trim().length > 0;
   const rankedProfiles = useMemo(
-    () => (hasSearched ? rankProfessionals(submittedQuery, filters) : []),
-    [filters, hasSearched, submittedQuery],
+    () => (hasSearched ? rankProfessionals(allProfessionals, submittedQuery, filters) : []),
+    [allProfessionals, filters, hasSearched, submittedQuery],
   );
   const activeProfile = rankedProfiles.length > 0 ? rankedProfiles[activeIndex % rankedProfiles.length] : null;
   const activeService = activeProfile ? selectedService || activeProfile.services[0].name : '';
-  const activeTime = activeProfile ? selectedTime || activeProfile.bookingSlots[0] : '';
+  const activeTime = activeProfile ? selectedTime || activeProfile.bookingSlots[0] || '' : '';
 
   if (infoPageMatch) {
     const pageKey = `${infoPageMatch[1]}/${infoPageMatch[2]}`;
@@ -794,14 +758,20 @@ function App() {
   }
 
   if (inviteToken) {
-    const invitation = invitationFixtures.find((fixture) => fixture.token === inviteToken);
     return (
       <InviteLanding
-        invitation={invitation}
+        token={inviteToken}
+        clientSession={clientSession}
+        onAuthRequired={() => openClientAuth('default')}
+        onClientConnected={(session) => {
+          setClientSession(session);
+          window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
+        }}
         onViewProfile={(professionalId) => {
-          const profileIndex = professionals.findIndex((profile) => profile.id === professionalId);
-          setSubmittedQuery('Mara Chen Frizi invitation');
-          setQuery('Mara Chen Frizi invitation');
+          const profileIndex = allProfessionals.findIndex((profile) => profile.id === professionalId || profile.id === `live-${professionalId}`);
+          const profileName = allProfessionals[profileIndex]?.name || 'Frizi invitation';
+          setSubmittedQuery(profileName);
+          setQuery(profileName);
           setActiveIndex(profileIndex >= 0 ? profileIndex : 0);
           window.history.pushState({}, '', '/');
         }}
@@ -809,9 +779,10 @@ function App() {
     );
   }
 
-  function submitSearch() {
-    const trimmedQuery = query.trim();
+  function submitSearch(nextQuery = query) {
+    const trimmedQuery = nextQuery.trim();
     if (!trimmedQuery) return;
+    setQuery(trimmedQuery);
     setSubmittedQuery(trimmedQuery);
     setActiveIndex(0);
     setSelectedService('');
@@ -837,12 +808,7 @@ function App() {
     setVoiceMessage('');
 
     if (!SpeechRecognition) {
-      setIsListening(true);
-      setVoiceMessage('Voice search is not available in this browser. Using a sample spoken search.');
-      window.setTimeout(() => {
-        runSearchFromVoice(sampleQuery);
-        setIsListening(false);
-      }, 650);
+      setVoiceMessage('Voice search is not available in this browser.');
       return;
     }
 
@@ -871,22 +837,139 @@ function App() {
     }
   }
 
-  function handleClientAuth(session: ClientSession) {
+  function handleClientAuth(session: ClientSession, createdAccount = false) {
     setClientSession(session);
     window.localStorage.setItem(clientSessionStorageKey, JSON.stringify(session));
     setAuthModalOpen(false);
-    if (authIntent === 'promo') {
+    if (createdAccount && !window.localStorage.getItem(locationPromptStorageKey)) {
+      setLocationPromptOpen(true);
+    }
+    if (authIntent === 'booking') {
+      const pendingBooking = window.localStorage.getItem(pendingBookingStorageKey);
+      if (pendingBooking) {
+        try {
+          void submitBookingRequest(JSON.parse(pendingBooking) as BookingRequest, session);
+          window.localStorage.removeItem(pendingBookingStorageKey);
+        } catch {
+          window.localStorage.removeItem(pendingBookingStorageKey);
+        }
+      }
+    } else if (authIntent === 'promo') {
       setOpenBookingAfterAuth(true);
       setActiveClientNav(null);
+    } else if (isAccountNavIntent(authIntent)) {
+      setActiveClientNav(authIntent);
     } else {
       setActiveClientNav('profile');
     }
     setAuthIntent('default');
   }
 
-  function openClientAuth(intent: 'default' | 'promo' = 'default') {
+  function clearClientAccountBrowserState() {
+    window.localStorage.removeItem(clientSessionStorageKey);
+    window.localStorage.removeItem(pendingBookingStorageKey);
+    window.sessionStorage.removeItem(clientOAuthContextStorageKey);
+    setClientSession(null);
+    setClientAppointments([]);
+    setBooking(null);
+    setOpenBookingAfterAuth(false);
+    setAuthIntent('default');
+    setAuthModalOpen(false);
+    setDeleteAccountOpen(false);
+    setActiveClientNav(null);
+  }
+
+  async function signOutClient() {
+    await createClient().auth.signOut().catch(() => undefined);
+    clearClientAccountBrowserState();
+  }
+
+  async function deleteClientAccount(confirmation: string) {
+    const { data, error } = await createClient().auth.getSession();
+    const accessToken = data.session?.access_token || clientSession?.accessToken;
+    if (error || !accessToken) throw error || new Error('Sign in again before deleting your account.');
+
+    const response = await fetch('/api/delete-account', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ confirmation }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Account deletion could not be completed.');
+    await createClient().auth.signOut().catch(() => undefined);
+    clearClientAccountBrowserState();
+  }
+
+  async function loadClientAppointments(session = clientSession) {
+    if (!session?.accessToken) return;
+    try {
+      const response = await fetch('/api/client-appointments', {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not load appointments.');
+      const appointments: BookingRequest[] = Array.isArray(payload.appointments)
+        ? payload.appointments.map((appointment: Record<string, unknown>) => bookingFromApiAppointment(appointment))
+        : [];
+      setClientAppointments(appointments);
+      const nextAppointment = appointments.find((appointment) => appointment.status === 'pending' || appointment.status === 'confirmed');
+      if (nextAppointment) setBooking(nextAppointment);
+    } catch (error) {
+      console.warn('[frizi-client-appointments]', error instanceof Error ? error.message : error);
+    }
+  }
+
+  async function submitBookingRequest(request: BookingRequest, session = clientSession) {
+    setBookingError('');
+    if (!session?.accessToken) {
+      window.localStorage.setItem(pendingBookingStorageKey, JSON.stringify(request));
+      openClientAuth('booking');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/client-appointments', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          professionalId: request.professionalId,
+          serviceId: request.serviceId,
+          scheduledStart: request.scheduledStart || request.time,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not book that appointment.');
+      const confirmedRequest = bookingFromApiAppointment(payload.appointment);
+      setBooking(confirmedRequest);
+      setClientAppointments((current) => [confirmedRequest, ...current.filter((appointment) => appointment.id !== confirmedRequest.id)]);
+      setActiveClientNav('appointments');
+    } catch (error) {
+      setBookingError(error instanceof Error ? error.message : 'Could not book that appointment.');
+      setActiveClientNav(null);
+    }
+  }
+
+  function openClientAuth(intent: ClientAuthIntent = 'default') {
     setAuthIntent(intent);
     setAuthModalOpen(true);
+  }
+
+  function handleClientNavChange(nav: ClientNavKey) {
+    if (nav === 'products') {
+      setActiveClientNav(nav);
+      return;
+    }
+    if (!clientSession) {
+      openClientAuth(nav);
+      return;
+    }
+    setActiveClientNav(nav);
   }
 
   function moveDeck(direction: 'previous' | 'next') {
@@ -910,23 +993,41 @@ function App() {
 
   function confirmBooking() {
     if (!activeProfile) return;
+    if (!activeTime) {
+      setBookingError('Choose an available appointment time.');
+      return;
+    }
     const selectedService = activeProfile.services.find((service) => service.name === activeService) || activeProfile.services[0];
-    const eventId = `booking_requested:${activeProfile.id}:${Date.now().toString().slice(-5)}`;
-    setBooking({
+    const selectedDay = buildAvailabilityDays(activeProfile.bookingSlots).find((day) => day.times.includes(activeTime));
+    const request: BookingRequest = {
       professionalId: activeProfile.id,
       professional: activeProfile.name,
       service: selectedService.name,
-      serviceId: serviceIdFor(activeProfile.id, selectedService.name),
+      serviceId: selectedService.id || serviceIdFor(activeProfile.id, selectedService.name),
       servicePriceCents: parseMoneyToCents(selectedService.price),
+      date: selectedDay
+        ? selectedDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })
+        : 'Selected date',
       time: activeTime,
-      eventId,
-    });
+      eventId: `appt_${Date.now().toString(36)}`,
+      status: 'pending',
+      scheduledStart: activeTime,
+      paymentRequirement: selectedService.paymentRequirement || 'pay_at_appointment',
+    };
+
+    if (!clientSession) {
+      window.localStorage.setItem(pendingBookingStorageKey, JSON.stringify(request));
+      openClientAuth('booking');
+      return;
+    }
+
+    void submitBookingRequest(request);
   }
 
   const showResults = hasSearched && Boolean(activeProfile);
 
   return (
-    <main className="min-h-screen bg-[#080808] pb-24 text-white">
+    <main className="clientApp min-h-screen bg-[#080808] pb-24 text-white">
       {!showResults ? (
         <header className="fixed left-0 right-0 top-0 z-50 border-b border-white/10 bg-[#080808]/88 px-4 py-3 backdrop-blur-xl">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
@@ -937,7 +1038,7 @@ function App() {
             <button
               className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
               type="button"
-              onClick={() => (clientSession ? setActiveClientNav('profile') : openClientAuth())}
+              onClick={() => (clientSession ? setActiveClientNav('profile') : openClientAuth('profile'))}
             >
               {clientSession ? clientSession.name.split(' ')[0] : 'Sign in/up'}
             </button>
@@ -949,10 +1050,13 @@ function App() {
           <ClientNavScreen
           activeNav={activeClientNav}
           booking={booking}
+          appointments={clientAppointments}
+          clientSession={clientSession}
+          isDemo={false}
           onBookSaved={(profileId) => {
-            const index = professionals.findIndex((profile) => profile.id === profileId);
+            const index = allProfessionals.findIndex((profile) => profile.id === profileId);
             if (index >= 0) {
-              const profile = professionals[index];
+              const profile = allProfessionals[index];
               setSubmittedQuery(profile.name);
               setQuery(profile.name);
               setActiveIndex(0);
@@ -960,7 +1064,9 @@ function App() {
               window.setTimeout(() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' }), 50);
             }
           }}
-          savedProfiles={professionals.filter((profile) => savedIds.includes(profile.id))}
+          onDeleteAccount={() => setDeleteAccountOpen(true)}
+          onSignOut={signOutClient}
+          savedProfiles={allProfessionals.filter((profile) => savedIds.includes(profile.id))}
         />
       ) : (
         <>
@@ -989,7 +1095,7 @@ function App() {
                   onNext={() => moveDeck('next')}
                   onSearch={submitSearch}
                   onPrevious={() => moveDeck('previous')}
-                  onToggleSaved={() => toggleSaved(activeProfile.id)}
+                  onToggleSaved={() => (clientSession ? toggleSaved(activeProfile.id) : openClientAuth('saved'))}
                   profile={activeProfile}
                   query={query}
                   setQuery={setQuery}
@@ -1000,6 +1106,7 @@ function App() {
               details={
               <ProfileDetails
                 booking={booking}
+                bookingError={bookingError}
                 clientSession={clientSession}
                 isClientSignedIn={Boolean(clientSession)}
                 onBook={confirmBooking}
@@ -1019,8 +1126,66 @@ function App() {
         </>
       )}
       {authModalOpen ? <ClientAuthModal intent={authIntent} onClose={() => setAuthModalOpen(false)} onComplete={handleClientAuth} /> : null}
-      <ClientFooter activeNav={activeClientNav} onChange={setActiveClientNav} />
+      {deleteAccountOpen ? <ClientDeleteAccountModal onClose={() => setDeleteAccountOpen(false)} onDelete={deleteClientAccount} /> : null}
+      {locationPromptOpen ? <LocationPrompt onClose={() => setLocationPromptOpen(false)} /> : null}
+      <DesktopMobilePrompt canonicalOrigin="https://frizi.ca" storageKey="frizi-client-mobile-prompt-dismissed" />
+      <ClientFooter activeNav={activeClientNav} onChange={handleClientNavChange} />
     </main>
+  );
+}
+
+function DesktopMobilePrompt({ canonicalOrigin, storageKey }: { canonicalOrigin: string; storageKey: string }) {
+  const [dismissed, setDismissed] = useState(() => window.localStorage.getItem(storageKey) === '1');
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 900px)').matches);
+
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 900px)');
+    const update = () => setIsDesktop(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (dismissed || !isDesktop) return;
+    const path = `${window.location.pathname}${window.location.search}`;
+    QRCode.toDataURL(`${canonicalOrigin}${path}`, { margin: 2, width: 164, color: { dark: '#23201c', light: '#fffaf0' } })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(''));
+  }, [canonicalOrigin, dismissed, isDesktop]);
+
+  if (dismissed || !isDesktop) return null;
+
+  return (
+    <aside className="desktopMobilePrompt" aria-label="Open Frizi on mobile">
+      <button
+        className="desktopMobilePromptClose"
+        type="button"
+        aria-label="Dismiss mobile prompt"
+        onClick={() => {
+          window.localStorage.setItem(storageKey, '1');
+          setDismissed(true);
+        }}
+      >
+        Close
+      </button>
+      <strong>Frizi works best on mobile.</strong>
+      <p>Scan the QR code to open Frizi on your phone.</p>
+      {qrDataUrl ? <img src={qrDataUrl} alt="QR code for frizi.ca" /> : <div className="desktopQrFallback"><QrCode size={42} /></div>}
+      <div className="desktopMobilePromptActions">
+        <button
+          type="button"
+          onClick={() => {
+            window.localStorage.setItem(storageKey, '1');
+            setDismissed(true);
+          }}
+        >
+          Continue on desktop
+        </button>
+      </div>
+      <small>Mobile apps coming soon.</small>
+    </aside>
   );
 }
 
@@ -1060,9 +1225,6 @@ function InfoPageView({ page }: { page?: InfoPage }) {
             Back to Frizi
           </a>
         </div>
-        <p className="mt-6 text-sm leading-6 text-white/45">
-          Demo policy draft for product validation. Have counsel review before production launch.
-        </p>
       </section>
     </main>
   );
@@ -1072,38 +1234,145 @@ function trackClientEvent(event: string, metadata: Record<string, string>) {
   console.info('[frizi-client-analytics]', event, metadata);
 }
 
+function getClientDisplayName(user: SupabaseUser, fallback = 'Frizi client') {
+  return String(user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || fallback).trim();
+}
+
+function clientSessionFromSupabaseSession(session: SupabaseSession): ClientSession {
+  return {
+    name: getClientDisplayName(session.user),
+    email: session.user.email || '',
+    accessToken: session.access_token,
+  };
+}
+
+function splitClientName(displayName: string) {
+  const parts = displayName.trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || displayName,
+    lastName: parts.slice(1).join(' '),
+  };
+}
+
+async function ensureCanonicalClientProfile(user: SupabaseUser, fallbackName?: string) {
+  if (!isSupabaseConfigured) return;
+  const email = user.email || '';
+  const displayName = getClientDisplayName(user, fallbackName || email || 'Frizi client');
+  const { firstName, lastName } = splitClientName(displayName);
+  const supabase = createClient();
+  const { data: profile, error: profileError } = await supabase
+    .from('frizi_profiles')
+    .upsert(
+      {
+        auth_user_id: user.id,
+        account_type: 'client',
+        display_name: displayName,
+        email,
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'auth_user_id' },
+    )
+    .select('id')
+    .single();
+
+  if (profileError) throw profileError;
+
+  const { data: existingClient, error: existingClientError } = await supabase.from('frizi_clients').select('id').eq('profile_id', profile.id).maybeSingle();
+  if (existingClientError) throw existingClientError;
+
+  const clientMutation = {
+    profile_id: profile.id,
+    preferred_name: displayName,
+    first_name: firstName,
+    last_name: lastName,
+    email,
+    account_claimed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: clientError } = existingClient
+    ? await supabase.from('frizi_clients').update(clientMutation).eq('id', existingClient.id)
+    : await supabase.from('frizi_clients').insert(clientMutation);
+  if (clientError) throw clientError;
+}
+
+function getSafeClientOAuthReturnPath() {
+  const { pathname } = window.location;
+  if (/^\/invite\/[A-Za-z0-9_-]+\/?$/.test(pathname)) return pathname.replace(/\/$/, '');
+  return '/';
+}
+
 function InviteLanding({
-  invitation,
+  clientSession,
+  onAuthRequired,
+  onClientConnected,
   onViewProfile,
+  token,
 }: {
-  invitation?: InvitationFixture;
+  clientSession: ClientSession | null;
+  onAuthRequired: () => void;
+  onClientConnected: (session: ClientSession) => void;
   onViewProfile: (professionalId: string) => void;
+  token: string;
 }) {
-  const [clientMode, setClientMode] = useState<'new' | 'existing'>('new');
+  const [inviteData, setInviteData] = useState<LiveInvite | null>(null);
+  const [inviteError, setInviteError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [connectMessage, setConnectMessage] = useState('');
   const [claimed, setClaimed] = useState(false);
   const [booking, setBooking] = useState<BookingRequest | null>(null);
-  const professional = invitation ? professionals.find((profile) => profile.id === invitation.professionalId) : undefined;
-  const clientKey = clientMode === 'existing' ? 'existing-client-demo' : 'new-client-demo';
-  const alreadyRedeemed = Boolean(invitation?.offer.redeemedClientKeys.includes(clientKey));
-  const offerIsClaimable = invitation?.offer.status === 'live' && !alreadyRedeemed;
 
   useEffect(() => {
-    if (invitation && professional) {
-      trackClientEvent('client_invite_opened', {
-        invitation_token: invitation.token,
-        professional_slug: professional.id,
-        offer_id: invitation.offer.id,
-      });
-    }
-  }, [invitation, professional]);
+    let cancelled = false;
 
-  if (!invitation || !professional) {
+    async function loadInvite() {
+      setLoading(true);
+      setInviteError('');
+      try {
+        const response = await fetch(`/api/invite?token=${encodeURIComponent(token)}`);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'This invitation is not available.');
+        if (!cancelled) {
+          setInviteData(payload as LiveInvite);
+          trackClientEvent('client_invite_opened', {
+            invitation_token: token,
+            professional_slug: (payload as LiveInvite).professional.id,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) setInviteError(error instanceof Error ? error.message : 'This invitation is not available.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadInvite();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#080808] px-4 py-6 text-white">
+        <section className="mx-auto flex min-h-[82vh] max-w-lg flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-center">
+          <QrCode className="mx-auto text-[#f4c430]" size={42} />
+          <h1 className="mt-5 text-3xl font-black">Opening invite...</h1>
+          <p className="mt-3 text-white/70">Checking this Frizi invite securely.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!inviteData) {
     return (
       <main className="min-h-screen bg-[#080808] px-4 py-6 text-white">
         <section className="mx-auto flex min-h-[82vh] max-w-lg flex-col justify-center rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-center">
           <QrCode className="mx-auto text-[#f4c430]" size={42} />
           <h1 className="mt-5 text-3xl font-black">This invitation is not available.</h1>
-          <p className="mt-3 text-white/70">The link may be expired, disabled, or typed incorrectly. Ask your hair professional for a fresh Frizi invite.</p>
+          <p className="mt-3 text-white/70">{inviteError || 'The link may be expired, disabled, or typed incorrectly. Ask your hair professional for a fresh Frizi invite.'}</p>
           <a className="mt-6 rounded-2xl bg-[#f4c430] px-5 py-4 text-center font-black text-black" href="/">
             Open Frizi
           </a>
@@ -1112,48 +1381,70 @@ function InviteLanding({
     );
   }
 
-  const activeInvitation = invitation;
-  const invitingProfessional = professional;
+  const invitingProfessional = inviteData.professional;
+  const offerIsClaimable = true;
 
-  function claimOffer() {
-    if (!offerIsClaimable) return;
+  async function claimOffer() {
+    if (!offerIsClaimable || connecting) return;
+    if (!clientSession?.accessToken) {
+      onAuthRequired();
+      setConnectMessage(`Sign in or create your Frizi account, then connect with ${invitingProfessional.name}.`);
+      return;
+    }
+
+    setConnecting(true);
+    setConnectMessage('');
     trackClientEvent('client_offer_claim_started', {
-      invitation_token: activeInvitation.token,
-      professional_slug: invitingProfessional.id,
-      client_mode: clientMode,
-    });
-    setClaimed(true);
-    trackClientEvent('client_offer_claimed', {
-      invitation_token: activeInvitation.token,
-      offer_id: activeInvitation.offer.id,
-      client_mode: clientMode,
-    });
-    trackClientEvent('client_connected_to_professional', {
-      invitation_token: activeInvitation.token,
+      invitation_token: token,
       professional_slug: invitingProfessional.id,
     });
+
+    try {
+      const response = await fetch('/api/accept-invite', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${clientSession.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token, displayName: clientSession.name }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not connect this invite.');
+
+      setClaimed(true);
+      onClientConnected(clientSession);
+      trackClientEvent('client_connected_to_professional', {
+        invitation_token: token,
+        professional_slug: invitingProfessional.id,
+      });
+    } catch (error) {
+      setConnectMessage(error instanceof Error ? error.message : 'Could not connect this invite.');
+    } finally {
+      setConnecting(false);
+    }
   }
 
   function bookFromInvite() {
-    const eventId = `client_booking_completed:${invitingProfessional.id}:${Date.now().toString().slice(-5)}`;
     const inviteService = invitingProfessional.services[0];
+    const inviteDay = buildAvailabilityDays(invitingProfessional.bookingSlots)[0];
     setBooking({
       professionalId: invitingProfessional.id,
       professional: invitingProfessional.name,
       service: inviteService.name,
       serviceId: serviceIdFor(invitingProfessional.id, inviteService.name),
       servicePriceCents: parseMoneyToCents(inviteService.price),
+      date: inviteDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }),
       time: invitingProfessional.bookingSlots[0],
-      eventId,
+      eventId: `appt_${Date.now().toString(36)}`,
+      status: 'pending',
     });
     trackClientEvent('client_booking_started', {
-      invitation_token: activeInvitation.token,
+      invitation_token: token,
       professional_slug: invitingProfessional.id,
     });
     trackClientEvent('client_booking_completed', {
-      invitation_token: activeInvitation.token,
+      invitation_token: token,
       professional_slug: invitingProfessional.id,
-      offer_id: activeInvitation.offer.id,
     });
   }
 
@@ -1161,16 +1452,16 @@ function InviteLanding({
     <main className="min-h-screen bg-[#080808] text-white">
       <section className="mx-auto grid min-h-screen w-full max-w-6xl gap-5 px-4 py-5 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-8">
         <aside className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
-          <img className="h-72 w-full object-cover sm:h-96 lg:h-[620px]" src={professional.detailImage} alt="" />
+          <img className="h-72 w-full object-cover sm:h-96 lg:h-[620px]" src={invitingProfessional.detailImage} alt="" />
         </aside>
 
         <section className="rounded-3xl border border-white/10 bg-white/[0.05] p-5 shadow-2xl shadow-black/30 sm:p-7">
           <div className="flex items-center gap-4">
-            <img className="h-20 w-20 rounded-full border-2 border-[#f4c430] object-cover" src={professional.heroImage} alt="" />
+            <img className="h-20 w-20 rounded-full border-2 border-[#f4c430] object-cover" src={invitingProfessional.heroImage} alt="" />
             <div>
               <p className="text-xs font-black uppercase tracking-[0.18em] text-[#f4c430]">Personal invitation</p>
-              <h1 className="text-3xl font-black leading-tight">{professional.name}</h1>
-              <p className="text-white/68">{professional.role} at {professional.studio}</p>
+              <h1 className="text-3xl font-black leading-tight">{invitingProfessional.name}</h1>
+              <p className="text-white/68">{invitingProfessional.role} at {invitingProfessional.studio}</p>
             </div>
           </div>
 
@@ -1178,11 +1469,9 @@ function InviteLanding({
             <div className="flex items-start gap-3">
               <Gift className="mt-1 shrink-0" size={24} />
               <div>
-                <p className="text-2xl font-black">{invitation.offer.status === 'live' ? invitation.offer.title : 'Offer currently paused'}</p>
+                <p className="text-2xl font-black">Connect with {invitingProfessional.name}</p>
                 <p className="mt-2 text-sm font-bold leading-6">
-                  {invitation.offer.status === 'live'
-                    ? `${invitation.offer.terms} Expires ${invitation.offer.expiresAt}.`
-                    : 'You can still view the professional profile and book, but this invite offer is not active right now.'}
+                  Accept this invite to share your Frizi hair profile with this professional and make future bookings easier.
                 </p>
               </div>
             </div>
@@ -1197,59 +1486,40 @@ function InviteLanding({
             ))}
           </div>
 
-          <div className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
-            <p className="font-black text-white">What is Frizi?</p>
-            <p className="mt-2 text-sm leading-6 text-white/70">
-              Frizi helps you book your professional, save the haircut photos and preferences that work, claim offers, and make future appointments easier.
-            </p>
+          <div className="mt-5 grid gap-3 rounded-3xl border border-white/10 bg-black/25 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
+            <div>
+              <p className="font-black text-white">{inviteData.mobilePrompt}</p>
+              <p className="mt-2 text-sm leading-6 text-white/70">Continue on web today. Mobile apps are coming soon.</p>
+            </div>
+            <span className="rounded-full border border-[#f4c430]/35 px-3 py-2 text-xs font-black text-[#f4c430]">Web ready</span>
           </div>
-
-          <div className="mt-5 flex gap-2 rounded-2xl bg-black/30 p-1">
-            {(['new', 'existing'] as const).map((mode) => (
-              <button
-                key={mode}
-                className={`min-h-11 flex-1 rounded-xl px-3 text-sm font-black ${clientMode === mode ? 'bg-[#f4c430] text-black' : 'text-white/70'}`}
-                onClick={() => {
-                  setClientMode(mode);
-                  setClaimed(false);
-                  setBooking(null);
-                }}
-              >
-                {mode === 'new' ? 'New client' : 'Existing client'}
-              </button>
-            ))}
-          </div>
-
-          {alreadyRedeemed ? (
-            <p className="mt-3 rounded-2xl border border-[#f4c430]/40 bg-[#f4c430]/10 p-4 text-sm font-bold text-[#f4c430]">
-              Demo safeguard: this existing account already redeemed the introductory offer.
-            </p>
-          ) : null}
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <button
               className="min-h-14 rounded-2xl bg-[#f4c430] px-5 font-black text-black disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!offerIsClaimable}
+              disabled={!offerIsClaimable || connecting}
               onClick={claimOffer}
             >
-              {claimed ? 'Offer claimed' : 'Claim offer'}
+              {claimed ? 'Connected' : connecting ? 'Connecting...' : clientSession ? 'Connect' : 'Sign in to connect'}
             </button>
-            <button className="min-h-14 rounded-2xl border border-white/15 px-5 font-black text-white" onClick={() => onViewProfile(professional.id)}>
+            <button className="min-h-14 rounded-2xl border border-white/15 px-5 font-black text-white" onClick={() => onViewProfile(invitingProfessional.id)}>
               View professional profile
             </button>
           </div>
 
+          {connectMessage ? <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 p-4 text-sm font-bold text-[#f4c430]">{connectMessage}</p> : null}
+
           {claimed ? (
             <div className="mt-5 rounded-3xl border border-[#f4c430]/40 bg-[#f4c430]/10 p-4">
-              <p className="font-black text-[#f4c430]">Connected to {professional.name}</p>
+              <p className="font-black text-[#f4c430]">Connected to {invitingProfessional.name}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">Your offer is attached to this professional relationship. You can book now without searching again.</p>
               <button className="mt-4 min-h-12 w-full rounded-2xl bg-white px-5 font-black text-black" onClick={bookFromInvite}>
-                Join and book {professional.bookingSlots[0]}
+                Join and book {invitingProfessional.bookingSlots[0]}
               </button>
             </div>
           ) : null}
 
-            {booking ? <BookingConfirmation booking={booking} clientSession={{ name: 'Invite Client', email: `${clientKey}@frizi.demo` }} /> : null}
+            {booking ? <BookingConfirmation booking={booking} clientSession={clientSession || { name: 'Invite Client', email: 'invite@frizi.ca' }} /> : null}
         </section>
       </section>
     </main>
@@ -1261,24 +1531,132 @@ function ClientAuthModal({
   onClose,
   onComplete,
 }: {
-  intent: 'default' | 'promo';
+  intent: ClientAuthIntent;
   onClose: () => void;
-  onComplete: (session: ClientSession) => void;
+  onComplete: (session: ClientSession, createdAccount?: boolean) => void;
 }) {
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
-  const [name, setName] = useState('Ari M.');
-  const [email, setEmail] = useState('ari@example.com');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  function submitAuth() {
-    const trimmedName = name.trim();
-    const trimmedEmail = email.trim();
-    if (!trimmedName || !trimmedEmail.includes('@')) {
-      setError('Add your name and a valid email to continue.');
+  async function continueWithGoogle() {
+    setError('');
+    setNotice('');
+
+    if (!isSupabaseConfigured) {
+      setError('Frizi account signup is not configured yet.');
       return;
     }
 
-    onComplete({ name: trimmedName, email: trimmedEmail });
+    setLoading(true);
+    try {
+      const returnPath = getSafeClientOAuthReturnPath();
+      window.sessionStorage.setItem(
+        clientOAuthContextStorageKey,
+        JSON.stringify({
+          intent,
+          returnPath,
+          hasPendingBooking: Boolean(window.localStorage.getItem(pendingBookingStorageKey)),
+          startedAt: new Date().toISOString(),
+        }),
+      );
+
+      const { error } = await createClient().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}${returnPath}`,
+        },
+      });
+
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+      }
+    } catch (authError) {
+      setError(authError instanceof Error ? authError.message : 'Frizi could not start Google sign-in.');
+      setLoading(false);
+    }
+  }
+
+  async function submitAuth() {
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    setError('');
+    setNotice('');
+
+    if (mode === 'signup' && !trimmedName) {
+      setError('Add your name to continue.');
+      return;
+    }
+
+    if (!trimmedEmail.includes('@') || password.length < 6) {
+      setError('Enter a valid email and a password with at least 6 characters.');
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setError('Frizi account signup is not configured yet.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const supabase = createClient();
+      const returnPath = getSafeClientOAuthReturnPath();
+      window.sessionStorage.setItem(
+        clientOAuthContextStorageKey,
+        JSON.stringify({
+          intent,
+          returnPath,
+          hasPendingBooking: Boolean(window.localStorage.getItem(pendingBookingStorageKey)),
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      if (mode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email: trimmedEmail,
+          password,
+          options: {
+            data: { full_name: trimmedName, account_type: 'client' },
+            emailRedirectTo: `${window.location.origin}${returnPath}`,
+          },
+        });
+
+        if (error) throw error;
+        if (!data.session) {
+          setNotice(
+            intent === 'booking'
+              ? 'Check your email to verify your Frizi account. Your selected appointment is saved for when you return and sign in.'
+              : 'Check your email to verify your Frizi account, then return to Frizi and sign in.',
+          );
+          return;
+        }
+
+        onComplete({ name: trimmedName, email: trimmedEmail, accessToken: data.session.access_token }, true);
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password });
+      if (error) throw error;
+      if (!data.session) {
+        setNotice('Sign in needs email verification first. Check your inbox, then try again.');
+        return;
+      }
+
+      onComplete({
+        name: data.user.user_metadata?.full_name || trimmedEmail.split('@')[0] || 'Frizi client',
+        email: trimmedEmail,
+        accessToken: data.session.access_token,
+      }, false);
+    } catch (authError) {
+      setError(authError instanceof Error ? authError.message : 'Frizi could not sign you in.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -1286,11 +1664,19 @@ function ClientAuthModal({
       <section className="w-full max-w-md rounded-[32px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-black text-[#f4c430]">{mode === 'signup' ? 'Create client account' : 'Welcome back'}</p>
-            <h2 className="mt-1 text-3xl font-black">{mode === 'signup' ? 'Join Frizi' : 'Sign in'}</h2>
-            {intent === 'promo' ? (
+            <p className="text-sm font-black text-[#f4c430]">{mode === 'signup' ? 'Free client account' : 'Welcome back'}</p>
+            <h2 className="mt-1 text-3xl font-black">
+              {mode === 'signup' ? 'Create your free Frizi account' : 'Sign in to Frizi'}
+            </h2>
+            {intent === 'booking' ? (
+              <p className="mt-2 text-sm font-bold leading-6 text-white/68">Book and manage appointments directly with your stylist.</p>
+            ) : intent === 'promo' ? (
               <p className="mt-2 text-sm font-bold leading-6 text-white/68">Sign up for exclusive deals and promos.</p>
-            ) : null}
+            ) : (
+              <p className="mt-2 text-sm font-bold leading-6 text-white/68">
+                Manage your bookings, save your hair profile and inspiration photos, connect with your stylist, and receive discounts and promotions.
+              </p>
+            )}
           </div>
           <button className="rounded-full border border-white/10 px-3 py-2 text-sm font-black text-white/70" type="button" onClick={onClose}>
             Close
@@ -1298,6 +1684,20 @@ function ClientAuthModal({
         </div>
 
         <div className="mt-5 grid grid-cols-2 rounded-2xl border border-white/10 bg-black/30 p-1">
+          <button
+            className="col-span-2 mb-3 flex min-h-14 items-center justify-center gap-3 rounded-2xl bg-white px-4 font-black text-black disabled:opacity-60"
+            type="button"
+            onClick={continueWithGoogle}
+            disabled={loading}
+          >
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-black text-sm text-[#f4c430]" aria-hidden="true">G</span>
+            Continue with Google
+          </button>
+          <div className="col-span-2 mb-3 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs font-black lowercase text-white/50" aria-hidden="true">
+            <span className="h-px bg-white/10" />
+            <strong>or</strong>
+            <span className="h-px bg-white/10" />
+          </div>
           {(['signup', 'signin'] as const).map((item) => (
             <button
               key={item}
@@ -1305,23 +1705,27 @@ function ClientAuthModal({
               type="button"
               onClick={() => setMode(item)}
             >
-              {item === 'signup' ? 'Sign up' : 'Sign in'}
+              {item === 'signup' ? 'Create account' : 'Sign in'}
             </button>
           ))}
         </div>
 
-        <label className="mt-5 block text-sm font-black text-white" htmlFor="client-auth-name">
-          Name
-        </label>
-        <input
-          id="client-auth-name"
-          className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Your name"
-        />
+        {mode === 'signup' ? (
+          <>
+            <label className="mt-5 block text-sm font-black text-white" htmlFor="client-auth-name">
+              Name
+            </label>
+            <input
+              id="client-auth-name"
+              className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Your name"
+            />
+          </>
+        ) : null}
 
-        <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-email">
+        <label className={`${mode === 'signup' ? 'mt-4' : 'mt-5'} block text-sm font-black text-white`} htmlFor="client-auth-email">
           Email
         </label>
         <input
@@ -1333,18 +1737,299 @@ function ClientAuthModal({
           type="email"
         />
 
-        {error ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{error}</p> : null}
+        <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-password">
+          Password
+        </label>
+        <input
+          id="client-auth-password"
+          className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="Password"
+          type="password"
+        />
 
-        <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-4 font-black text-black" type="button" onClick={submitAuth}>
+        {error ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{error}</p> : null}
+        {notice ? <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-3 py-2 text-sm font-bold text-[#f4c430]">{notice}</p> : null}
+
+        <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-4 font-black text-black disabled:opacity-60" type="button" onClick={submitAuth} disabled={loading}>
           <User size={18} />
-          {mode === 'signup' ? 'Create account' : 'Sign in'}
+          {loading ? 'Please wait...' : mode === 'signup' ? 'Create account' : 'Sign in'}
         </button>
         <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
           {intent === 'promo'
             ? 'Promos only apply when booking and paying through Frizi.'
-            : 'Demo account flow saves this client session in the browser and opens your Frizi profile.'}
+            : intent === 'booking'
+              ? 'After you sign in, Frizi will bring you back to this appointment request.'
+            : 'Use your Frizi account to connect with professionals, keep hair photos, and manage bookings.'}
         </p>
       </section>
+    </div>
+  );
+}
+
+function ClientDeleteAccountModal({
+  onClose,
+  onDelete,
+}: {
+  onClose: () => void;
+  onDelete: (confirmation: string) => Promise<void>;
+}) {
+  const [confirmation, setConfirmation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const canDelete = confirmation.trim().toUpperCase() === 'DELETE';
+
+  async function submitDelete() {
+    if (!canDelete || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onDelete('DELETE');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Account deletion could not be completed.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-black/78 px-4 backdrop-blur-sm">
+      <section className="w-full max-w-md rounded-[32px] border border-red-300/25 bg-[#151519] p-5 shadow-2xl shadow-black/60">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Trash2 className="text-red-100" size={30} />
+            <h2 className="mt-4 text-3xl font-black">Delete your Frizi account?</h2>
+            <p className="mt-3 text-sm font-bold leading-6 text-white/68">
+              You will lose access to your account. Profile data will be removed or deactivated according to Frizi retention rules, and this cannot simply be undone.
+            </p>
+          </div>
+          <button className="rounded-full border border-white/10 px-3 py-2 text-sm font-black text-white/70" type="button" onClick={onClose} disabled={busy}>
+            Close
+          </button>
+        </div>
+        <label className="mt-5 block">
+          <span className="text-sm font-black text-white">Type DELETE to confirm</span>
+          <input
+            className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 font-semibold text-white outline-none"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            autoComplete="off"
+          />
+        </label>
+        {error ? <p className="mt-4 rounded-2xl border border-red-300/35 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100">{error}</p> : null}
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button className="min-h-12 rounded-2xl border border-white/15 px-4 text-sm font-black text-white" type="button" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            className="min-h-12 rounded-2xl bg-red-200 px-4 text-sm font-black text-black disabled:opacity-45"
+            type="button"
+            onClick={submitDelete}
+            disabled={!canDelete || busy}
+          >
+            {busy ? 'Deleting...' : 'Delete account'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LocationPrompt({ onClose }: { onClose: () => void }) {
+  const [message, setMessage] = useState('');
+
+  function finish() {
+    window.localStorage.setItem(locationPromptStorageKey, '1');
+    onClose();
+  }
+
+  function shareLocation() {
+    if (!navigator.geolocation) {
+      setMessage('Location sharing is not available in this browser.');
+      return;
+    }
+
+    setMessage('Requesting location...');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        window.localStorage.setItem(
+          'frizi-client-location',
+          JSON.stringify({
+            latitude: Number(position.coords.latitude.toFixed(3)),
+            longitude: Number(position.coords.longitude.toFixed(3)),
+            accuracy: Math.round(position.coords.accuracy),
+            capturedAt: new Date().toISOString(),
+          }),
+        );
+        finish();
+      },
+      () => setMessage('Location was not shared. You can still book without it.'),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60 * 60 * 1000 },
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/72 px-4 backdrop-blur-sm">
+      <section className="w-full max-w-md rounded-[32px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60">
+        <MapPin className="text-[#f4c430]" size={30} />
+        <h2 className="mt-4 text-3xl font-black">Share your location to find professionals near you</h2>
+        <p className="mt-3 leading-7 text-white/68">Frizi can use your approximate location to improve local search. You can skip this and book normally.</p>
+        <div className="mt-5 grid gap-3">
+          <button className="min-h-14 rounded-2xl bg-[#f4c430] px-5 font-black text-black" type="button" onClick={shareLocation}>
+            Share location
+          </button>
+          <button className="min-h-14 rounded-2xl border border-white/15 px-5 font-black text-white" type="button" onClick={finish}>
+            Not now
+          </button>
+        </div>
+        {message ? <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm font-bold text-white/68">{message}</p> : null}
+      </section>
+    </div>
+  );
+}
+
+function SearchInputWithSuggestions({
+  id,
+  isListening,
+  onMic,
+  onSubmit,
+  query,
+  setQuery,
+  voiceMessage,
+  compact = false,
+}: {
+  id: string;
+  isListening: boolean;
+  onMic: () => void;
+  onSubmit: (nextQuery?: string) => void;
+  query: string;
+  setQuery: (value: string) => void;
+  voiceMessage: string;
+  compact?: boolean;
+}) {
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleSuggestions = normalizedQuery
+    ? searchSuggestionCategories.filter((suggestion) =>
+        [suggestion.label, suggestion.query, ...suggestion.aliases].some((term) => term.toLowerCase().includes(normalizedQuery)),
+      )
+    : searchSuggestionCategories;
+  const suggestionsId = `${id}-suggestions`;
+
+  useEffect(() => {
+    function closeOnOutside(event: MouseEvent | TouchEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!containerRef.current?.contains(target)) {
+        setSuggestionsOpen(false);
+        setActiveSuggestionIndex(-1);
+      }
+    }
+
+    document.addEventListener('mousedown', closeOnOutside);
+    document.addEventListener('touchstart', closeOnOutside);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutside);
+      document.removeEventListener('touchstart', closeOnOutside);
+    };
+  }, []);
+
+  function chooseSuggestion(nextQuery: string) {
+    setQuery(nextQuery);
+    setSuggestionsOpen(false);
+    setActiveSuggestionIndex(-1);
+    onSubmit(nextQuery);
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className={`flex items-center gap-2 rounded-[22px] border border-white/10 bg-white/8 px-3 ${compact ? 'py-2' : 'py-2'}`}>
+        <Search className="shrink-0 text-[#f4c430]" size={compact ? 18 : 20} />
+        <input
+          id={id}
+          aria-autocomplete="list"
+          aria-controls={suggestionsId}
+          aria-expanded={suggestionsOpen}
+          className={`min-w-0 flex-1 bg-transparent font-semibold text-white outline-none placeholder:text-white/45 ${compact ? 'text-sm' : 'text-base'}`}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setSuggestionsOpen(true);
+            setActiveSuggestionIndex(-1);
+          }}
+          onFocus={() => setSuggestionsOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              setSuggestionsOpen(true);
+              setActiveSuggestionIndex((current) => Math.min(current + 1, visibleSuggestions.length - 1));
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              setActiveSuggestionIndex((current) => Math.max(current - 1, 0));
+            } else if (event.key === 'Escape') {
+              setSuggestionsOpen(false);
+              setActiveSuggestionIndex(-1);
+            } else if (event.key === 'Enter') {
+              event.preventDefault();
+              const activeSuggestion = visibleSuggestions[activeSuggestionIndex];
+              if (suggestionsOpen && activeSuggestion) {
+                chooseSuggestion(activeSuggestion.query);
+                return;
+              }
+              setSuggestionsOpen(false);
+              onSubmit();
+            }
+          }}
+          placeholder="I am looking for....."
+          role="combobox"
+        />
+        <button
+          aria-label="Voice search"
+          className={`grid shrink-0 place-items-center rounded-full ${
+            compact ? 'h-10 w-10' : 'h-11 w-11'
+          } ${isListening ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'}`}
+          type="button"
+          onClick={onMic}
+        >
+          <Mic size={compact ? 17 : 18} />
+        </button>
+      </div>
+      {suggestionsOpen ? (
+        <div
+          id={suggestionsId}
+          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(18rem,45vh)] overflow-auto rounded-[22px] border border-white/12 bg-[#151519]/98 p-2 shadow-2xl shadow-black/55 backdrop-blur-xl"
+          role="listbox"
+        >
+          {visibleSuggestions.length ? (
+            visibleSuggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.label}
+                aria-selected={activeSuggestionIndex === index}
+                className={`flex min-h-11 w-full items-center justify-between rounded-2xl px-3 text-left text-sm font-black ${
+                  activeSuggestionIndex === index ? 'bg-[#f4c430] text-black' : 'text-white hover:bg-white/8'
+                }`}
+                role="option"
+                type="button"
+                onMouseEnter={() => setActiveSuggestionIndex(index)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseSuggestion(suggestion.query)}
+              >
+                <span>{suggestion.label}</span>
+                <Search size={15} />
+              </button>
+            ))
+          ) : (
+            <p className="px-3 py-3 text-sm font-semibold text-white/58">Press Enter to search your exact phrase.</p>
+          )}
+        </div>
+      ) : null}
+      {isListening || voiceMessage ? (
+        <p className={`mt-2 rounded-2xl bg-[#f4c430]/14 px-3 py-2 font-black text-[#f4c430] ${compact ? 'text-xs' : 'text-sm'}`}>
+          {voiceMessage || 'Listening...'}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1365,7 +2050,7 @@ function HeroSearch({
   hasSearched: boolean;
   isListening: boolean;
   onMic: () => void;
-  onSubmit: () => void;
+  onSubmit: (nextQuery?: string) => void;
   query: string;
   resultCount: number;
   setFilters: (value: FilterState) => void;
@@ -1379,7 +2064,7 @@ function HeroSearch({
   }
 
   return (
-    <section className="relative h-[100svh] overflow-hidden pt-20">
+    <section className="clientMediaSurface relative h-[100svh] overflow-hidden pt-20">
       <img
         className="absolute inset-0 h-full w-full object-cover"
         src="https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1800&q=85"
@@ -1398,32 +2083,16 @@ function HeroSearch({
             <label className="sr-only" htmlFor="frizi-search">
               Search for a hair professional
             </label>
-            <div className="flex items-center gap-2 rounded-[22px] border border-white/10 bg-white/8 px-3 py-2">
-              <Search className="shrink-0 text-[#f4c430]" size={20} />
-              <input
-                id="frizi-search"
-                className="min-w-0 flex-1 bg-transparent text-base font-semibold text-white outline-none placeholder:text-white/45"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    onSubmit();
-                  }
-                }}
-                placeholder="I am looking for....."
-              />
-              <button
-                aria-label="Demo voice search"
-                className={`grid h-11 w-11 shrink-0 place-items-center rounded-full ${
-                  isListening ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
-                }`}
-                type="button"
-                onClick={onMic}
-              >
-                <Mic size={18} />
-              </button>
-            </div>
-            <button className="mt-3 min-h-12 w-full rounded-2xl bg-[#f4c430] px-5 font-black text-black" type="button" onClick={onSubmit}>
+            <SearchInputWithSuggestions
+              id="frizi-search"
+              isListening={isListening}
+              onMic={onMic}
+              onSubmit={onSubmit}
+              query={query}
+              setQuery={setQuery}
+              voiceMessage={voiceMessage}
+            />
+            <button className="mt-3 min-h-12 w-full rounded-2xl bg-[#f4c430] px-5 font-black text-black" type="button" onClick={() => onSubmit()}>
               Search
             </button>
             <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04]">
@@ -1485,11 +2154,6 @@ function HeroSearch({
                 {resultCount} local {resultCount === 1 ? 'match' : 'matches'} near your current location.
               </p>
             ) : null}
-            {isListening || voiceMessage ? (
-              <p className="mt-3 rounded-2xl bg-[#f4c430]/12 px-3 py-2 text-sm font-bold text-[#f4c430]">
-                {voiceMessage || 'Listening...'}
-              </p>
-            ) : null}
           </div>
         </div>
       </div>
@@ -1531,9 +2195,9 @@ function NoLocalMatches() {
     <section className="mx-auto max-w-3xl px-4 pb-28 pt-5 sm:px-6 lg:px-8">
       <div className="rounded-[28px] border border-white/10 bg-[#151519] p-6 text-center">
         <Search className="mx-auto text-[#f4c430]" size={32} />
-        <h2 className="mt-4 text-2xl font-black">No local matches yet</h2>
+        <h2 className="mt-4 text-2xl font-black">No professionals found</h2>
         <p className="mt-2 leading-7 text-white/68">
-          Try expanding the distance filter or using fewer specifics in the search.
+          Try another service or location.
         </p>
       </div>
     </section>
@@ -1559,42 +2223,23 @@ function ResultsSearchPill({
 }: {
   isListening: boolean;
   onMic: () => void;
-  onSearch: () => void;
+  onSearch: (nextQuery?: string) => void;
   query: string;
   setQuery: (value: string) => void;
   voiceMessage: string;
 }) {
   return (
     <div className="rounded-[24px] border border-white/16 bg-black/58 p-2 shadow-2xl shadow-black/45 backdrop-blur-xl">
-      <div className="flex items-center gap-2 rounded-[18px] border border-white/10 bg-white/10 px-3 py-2">
-        <Search className="shrink-0 text-[#f4c430]" size={18} />
-        <input
-          className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white outline-none placeholder:text-white/50"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              onSearch();
-            }
-          }}
-          placeholder="I am looking for....."
-        />
-        <button
-          aria-label="Voice search"
-          className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${
-            isListening ? 'bg-[#f4c430] text-black' : 'bg-white/12 text-white'
-          }`}
-          type="button"
-          onClick={onMic}
-        >
-          <Mic size={17} />
-        </button>
-      </div>
-      {isListening || voiceMessage ? (
-        <p className="mt-2 rounded-2xl bg-[#f4c430]/14 px-3 py-2 text-xs font-black text-[#f4c430]">
-          {voiceMessage || 'Listening...'}
-        </p>
-      ) : null}
+      <SearchInputWithSuggestions
+        compact
+        id="frizi-results-search"
+        isListening={isListening}
+        onMic={onMic}
+        onSubmit={onSearch}
+        query={query}
+        setQuery={setQuery}
+        voiceMessage={voiceMessage}
+      />
     </div>
   );
 }
@@ -1619,7 +2264,7 @@ function DeckCard({
   isSaved: boolean;
   onMic: () => void;
   onNext: () => void;
-  onSearch: () => void;
+  onSearch: (nextQuery?: string) => void;
   onPrevious: () => void;
   onToggleSaved: () => void;
   profile: Professional;
@@ -1666,7 +2311,7 @@ function DeckCard({
 
   return (
     <section
-      className="relative h-[100svh] overflow-hidden bg-black [touch-action:pan-y]"
+      className="clientMediaSurface relative h-[100svh] overflow-hidden bg-black [touch-action:pan-y]"
       onPointerDown={(event) => {
         if (event.pointerType === 'touch') return;
         setTouchStartX(event.clientX);
@@ -1741,7 +2386,7 @@ function DeckCard({
           <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm font-black text-white">
             <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
               <Star className="text-[#f4c430]" size={16} fill="currentColor" />
-              {profile.rating}
+              {profile.reviews > 0 ? profile.rating : 'New'}
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
               <MapPin className="text-[#f4c430]" size={16} />
@@ -1756,6 +2401,7 @@ function DeckCard({
 
 function ProfileDetails({
   booking,
+  bookingError,
   clientSession,
   isClientSignedIn,
   onBook,
@@ -1769,6 +2415,7 @@ function ProfileDetails({
   setSelectedTime,
 }: {
   booking: BookingRequest | null;
+  bookingError: string;
   clientSession: ClientSession | null;
   isClientSignedIn: boolean;
   onBook: () => void;
@@ -1807,6 +2454,7 @@ function ProfileDetails({
       <BookingCalendarPage
         availabilityDays={availabilityDays}
         booking={booking}
+        bookingError={bookingError}
         clientSession={clientSession}
         onBack={() => setBookingOpen(false)}
         onBook={onBook}
@@ -1866,14 +2514,15 @@ function ProfileDetails({
           type="button"
           onClick={() => setShowReviews((current) => !current)}
         >
-          Reviews {profile.rating}
+          Reviews {profile.reviews > 0 ? profile.rating : 'New'}
           <Star size={16} fill="currentColor" />
         </button>
 
         {showReviews ? (
           <Panel title="Reviews">
-            <div className="space-y-3">
-              {profile.clientReviews.map((review) => (
+            {profile.clientReviews.length ? (
+              <div className="space-y-3">
+                {profile.clientReviews.map((review) => (
                 <article key={review.name} className="rounded-2xl bg-white/[0.05] p-4">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-black">{review.name}</p>
@@ -1884,8 +2533,11 @@ function ProfileDetails({
                   </div>
                   <p className="mt-2 text-sm leading-6 text-white/68">{review.text}</p>
                 </article>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <p className="leading-7 text-white/64">No public reviews yet.</p>
+            )}
           </Panel>
         ) : null}
       </div>
@@ -1896,6 +2548,7 @@ function ProfileDetails({
 function BookingCalendarPage({
   availabilityDays,
   booking,
+  bookingError,
   clientSession,
   onBack,
   onBook,
@@ -1910,11 +2563,12 @@ function BookingCalendarPage({
 }: {
   availabilityDays: ReturnType<typeof buildAvailabilityDays>;
   booking: BookingRequest | null;
+  bookingError: string;
   clientSession: ClientSession | null;
   onBack: () => void;
   onBook: () => void;
   profile: Professional;
-  selectedDay: ReturnType<typeof buildAvailabilityDays>[number];
+  selectedDay: ReturnType<typeof buildAvailabilityDays>[number] | undefined;
   selectedService: string;
   selectedTime: string;
   servicesOpen: boolean;
@@ -1923,10 +2577,14 @@ function BookingCalendarPage({
   setServicesOpen: (value: boolean | ((current: boolean) => boolean)) => void;
 }) {
   const [monthCursor, setMonthCursor] = useState(() => startOfMonth(selectedDay?.date ?? new Date()));
+  const [timeSheetDay, setTimeSheetDay] = useState<ReturnType<typeof buildAvailabilityDays>[number] | null>(null);
   const availableByDate = useMemo(
     () => new Map(availabilityDays.map((day) => [dateKey(day.date), day])),
     [availabilityDays],
   );
+  const selectedServiceRecord = profile.services.find((service) => service.name === selectedService) || profile.services[0];
+  const selectedPaymentRequirement = selectedServiceRecord?.paymentRequirement || 'pay_at_appointment';
+  const paymentBlocksBooking = selectedPaymentRequirement === 'deposit_required' || selectedPaymentRequirement === 'full_prepayment_required';
   const monthCells = useMemo(() => buildMonthCells(monthCursor), [monthCursor]);
   const monthLabel = monthCursor.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
 
@@ -1996,7 +2654,11 @@ function BookingCalendarPage({
                   }`}
                   type="button"
                   disabled={!availableDay}
-                  onClick={() => availableDay && setSelectedTime(availableDay.times[0])}
+                  onClick={() => {
+                    if (!availableDay) return;
+                    setSelectedTime(availableDay.times[0]);
+                    setTimeSheetDay(availableDay);
+                  }}
                 >
                   {cell ? (
                     <span className="flex h-full flex-col items-center justify-center">
@@ -2008,6 +2670,11 @@ function BookingCalendarPage({
               );
             })}
           </div>
+          {availabilityDays.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm font-semibold text-white/64">
+              This professional has not opened client-bookable times yet.
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-4 space-y-4 rounded-[28px] border border-white/10 bg-[#151519] p-5">
@@ -2047,12 +2714,50 @@ function BookingCalendarPage({
             </div>
           ) : null}
 
-          <div>
-            <p className="text-sm font-black text-[#f4c430]">
-              {selectedDay ? selectedDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Select a day'}
+          <p className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-black text-[#f4c430]">
+            {selectedDay ? selectedDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Select a day'}
+            {selectedTime ? <span className="ml-2 text-white">at {formatSlotTime(selectedTime)}</span> : null}
+          </p>
+
+          {selectedPaymentRequirement === 'frizi_payment_optional' ? (
+            <p className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/64">
+              Payment through Frizi is optional for this service. You can book now and pay at the appointment.
             </p>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(selectedDay?.times ?? []).map((slot) => (
+          ) : null}
+          {paymentBlocksBooking ? (
+            <p className="rounded-2xl border border-amber-300/35 bg-amber-300/10 px-4 py-3 text-sm font-bold text-amber-100">
+              This service requires online {selectedPaymentRequirement === 'deposit_required' ? 'deposit' : 'prepayment'} before booking. Frizi checkout is not live for this service yet.
+            </p>
+          ) : null}
+
+          <button
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/38"
+            type="button"
+            onClick={onBook}
+            disabled={paymentBlocksBooking || !selectedTime}
+          >
+            <CalendarDays size={20} />
+            Book an appointment
+          </button>
+          {bookingError ? <p className="rounded-2xl bg-red-500/12 px-4 py-3 text-sm font-bold text-red-100">{bookingError}</p> : null}
+          {booking ? <BookingConfirmation booking={booking} clientSession={clientSession} /> : null}
+        </div>
+      </div>
+
+      {timeSheetDay ? (
+        <div className="fixed inset-0 z-[75] flex items-end bg-black/68 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6" onClick={() => setTimeSheetDay(null)}>
+          <section
+            aria-modal="true"
+            className="w-full rounded-[28px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60 sm:max-w-md"
+            role="dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="text-sm font-black text-[#f4c430]">Choose a time</p>
+            <h2 className="mt-1 text-2xl font-black">
+              {timeSheetDay.date.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </h2>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {timeSheetDay.times.map((slot) => (
                 <button
                   key={slot}
                   className={`rounded-2xl border px-3 py-4 text-sm font-black ${
@@ -2065,15 +2770,20 @@ function BookingCalendarPage({
                 </button>
               ))}
             </div>
-          </div>
-
-          <button className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black" type="button" onClick={onBook}>
-            <CalendarDays size={20} />
-            Book an appointment
-          </button>
-          {booking ? <BookingConfirmation booking={booking} clientSession={clientSession} /> : null}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button className="min-h-12 rounded-2xl border border-white/15 px-4 font-black text-white" type="button" onClick={() => setTimeSheetDay(null)}>
+                Cancel
+              </button>
+              <button className="min-h-12 rounded-2xl bg-[#f4c430] px-4 font-black text-black" type="button" onClick={() => {
+                setTimeSheetDay(null);
+                onBook();
+              }}>
+                Book appointment
+              </button>
+            </div>
+          </section>
         </div>
-      </div>
+      ) : null}
     </section>
   );
 }
@@ -2119,13 +2829,23 @@ function ClientFooter({
 
 function ClientNavScreen({
   activeNav,
+  appointments,
   booking,
+  clientSession,
+  isDemo,
   onBookSaved,
+  onDeleteAccount,
+  onSignOut,
   savedProfiles,
 }: {
   activeNav: ClientNavKey;
+  appointments: BookingRequest[];
   booking: BookingRequest | null;
+  clientSession: ClientSession | null;
+  isDemo: boolean;
   onBookSaved: (profileId: string) => void;
+  onDeleteAccount: () => void;
+  onSignOut: () => void;
   savedProfiles: Professional[];
 }) {
   const titleMap: Record<ClientNavKey, string> = {
@@ -2138,54 +2858,100 @@ function ClientNavScreen({
   return (
     <section className="mx-auto min-h-screen max-w-4xl px-4 pb-28 pt-24 sm:px-6 lg:px-8">
       <h1 className="text-4xl font-black">{titleMap[activeNav]}</h1>
-      {activeNav === 'appointments' ? <AppointmentsPanel booking={booking} /> : null}
+      {activeNav === 'appointments' ? <AppointmentsPanel appointments={appointments} booking={booking} isDemo={isDemo} /> : null}
       {activeNav === 'saved' ? <SavedPanel profiles={savedProfiles} onBookSaved={onBookSaved} /> : null}
-      {activeNav === 'products' ? <ProductsPanel /> : null}
-      {activeNav === 'profile' ? <ClientPassportPanel /> : null}
+      {activeNav === 'products' ? <ProductsPanel isDemo={isDemo} /> : null}
+      {activeNav === 'profile' ? <ClientPassportPanel clientSession={clientSession} isDemo={isDemo} onDeleteAccount={onDeleteAccount} onSignOut={onSignOut} /> : null}
     </section>
   );
 }
 
-function AppointmentsPanel({ booking }: { booking: BookingRequest | null }) {
+function AppointmentsPanel({
+  appointments,
+  booking,
+  isDemo,
+}: {
+  appointments: BookingRequest[];
+  booking: BookingRequest | null;
+  isDemo: boolean;
+}) {
+  const visibleAppointments = appointments.length ? appointments : booking ? [booking] : [];
+  const upcomingAppointments = visibleAppointments.filter((appointment) => appointment.status === 'confirmed');
+  const pendingAppointments = visibleAppointments.filter((appointment) => appointment.status === 'pending');
+  const pastAppointments = visibleAppointments.filter((appointment) => ['declined', 'cancelled', 'completed'].includes(appointment.status));
+
   return (
     <div className="mt-5 space-y-4">
-      {booking ? (
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Upcoming</h2>
+        {upcomingAppointments.length ? (
+          <div className="mt-4 space-y-3">
+            {upcomingAppointments.map((appointment) => (
+              <BookingConfirmation key={appointment.eventId} booking={appointment} clientSession={null} />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-2xl bg-white/[0.05] p-4">
+            <CalendarDays className="text-[#f4c430]" size={30} />
+            <h3 className="mt-4 text-xl font-black">No upcoming appointments</h3>
+            <p className="mt-2 leading-7 text-white/68">Search for a professional, choose a service, and book when you are ready.</p>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Pending</h2>
+        {pendingAppointments.length ? (
+          <div className="mt-4 space-y-3">
+            {pendingAppointments.map((appointment) => (
+              <BookingConfirmation key={appointment.eventId} booking={appointment} clientSession={null} />
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 leading-7 text-white/64">No pending appointment requests.</p>
+        )}
+      </div>
+
+      {isDemo ? (
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <BookingConfirmation booking={booking} clientSession={null} />
+          <h2 className="text-2xl font-black">Past</h2>
+          <div className="mt-4 space-y-3">
+            {completedAppointmentHistory.map((appointment) => {
+              const total = appointment.servicePriceCents + appointment.tipCents;
+              return (
+                <article key={appointment.id} className="rounded-2xl bg-white/[0.05] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-black text-white">{appointment.service}</p>
+                      <p className="mt-1 text-sm font-semibold text-white/58">{appointment.professional} - {appointment.date}</p>
+                    </div>
+                    <p className="text-lg font-black text-[#f4c430]">{formatCurrency(total)}</p>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                    <InfoTile label="Price" value={formatCurrency(appointment.servicePriceCents)} />
+                    <InfoTile label="Tip" value={formatCurrency(appointment.tipCents)} />
+                    <InfoTile label="Review" value={appointment.reviewStatus} />
+                    <InfoTile label="Photos" value={`${appointment.photosAttached} attached`} />
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         </div>
       ) : (
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <CalendarDays className="text-[#f4c430]" size={30} />
-          <h2 className="mt-4 text-2xl font-black">No appointment booked yet</h2>
-          <p className="mt-2 leading-7 text-white/68">Search without signing up, choose a professional, and your booked appointment will appear here.</p>
+          <h2 className="text-2xl font-black">Past</h2>
+          {pastAppointments.length ? (
+            <div className="mt-4 space-y-3">
+              {pastAppointments.map((appointment) => (
+                <BookingConfirmation key={appointment.eventId} booking={appointment} clientSession={null} />
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 leading-7 text-white/64">No past appointments yet.</p>
+          )}
         </div>
       )}
-      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-        <h2 className="text-2xl font-black">Completed appointments</h2>
-        <div className="mt-4 space-y-3">
-          {completedAppointmentHistory.map((appointment) => {
-            const taxes = Math.round(appointment.servicePriceCents * taxRate);
-            const total = appointment.servicePriceCents + taxes + appointment.tipCents;
-            return (
-              <article key={appointment.id} className="rounded-2xl bg-white/[0.05] p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-black text-white">{appointment.service}</p>
-                    <p className="mt-1 text-sm font-semibold text-white/58">{appointment.professional} - {appointment.date}</p>
-                  </div>
-                  <p className="text-lg font-black text-[#f4c430]">{formatCurrency(total)}</p>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                  <InfoTile label="Price" value={formatCurrency(appointment.servicePriceCents)} />
-                  <InfoTile label="Tip" value={formatCurrency(appointment.tipCents)} />
-                  <InfoTile label="Review" value={appointment.reviewStatus} />
-                  <InfoTile label="Photos" value={`${appointment.photosAttached} attached`} />
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }
@@ -2226,8 +2992,40 @@ function SavedPanel({
   );
 }
 
-function ProductsPanel() {
-  const customerId = 'client_ari_demo';
+function ProductsPanel({ isDemo }: { isDemo: boolean }) {
+  if (!isDemo) {
+    return (
+      <div className="mt-5 overflow-hidden rounded-[28px] border border-white/10 bg-[#151519]">
+        <div className="relative p-6">
+          <div className="absolute right-5 top-5 rounded-full bg-[#f4c430] px-3 py-2 text-xs font-black text-black">Coming Soon</div>
+          <ShoppingBag className="text-[#f4c430]" size={32} />
+          <h2 className="mt-4 max-w-sm text-3xl font-black">Product recommendations</h2>
+          <p className="mt-3 max-w-xl leading-7 text-white/68">
+            Soon, your stylist will be able to recommend products directly through Frizi. Product purchasing is not active yet.
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {[
+              {
+                title: 'Stylist recommended routines',
+                copy: 'See product suggestions matched to your hair goals once recommendations go live.',
+              },
+              {
+                title: 'Buy through Frizi',
+                copy: 'Checkout, promos, and order tracking will stay disabled until commerce is ready.',
+              },
+            ].map((item) => (
+              <article key={item.title} className="rounded-2xl border border-white/10 bg-white/[0.05] p-4 opacity-80">
+                <p className="font-black">{item.title}</p>
+                <p className="mt-2 text-sm leading-6 text-white/60">{item.copy}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const customerId = 'commerce_coming_soon_customer';
   const [catalogue, setCatalogue] = useState<CommerceCatalogueItem[]>([]);
   const [cartItems, setCartItems] = useState<CommerceCartItem[]>([]);
   const [province, setProvince] = useState('ON');
@@ -2331,29 +3129,8 @@ function ProductsPanel() {
   }
 
   async function startProductCheckout() {
-    setCheckoutLoading(true);
-    setCommerceError('');
-    try {
-      const response = await fetch('/api/create-checkout-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind: 'product_purchase',
-          customerEmail: 'ari@frizi.demo',
-          ...cartPayload,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        setCommerceError(payload.error || 'Could not start product checkout.');
-        return;
-      }
-      window.location.href = payload.url;
-    } catch (error) {
-      setCommerceError(error instanceof Error ? error.message : 'Could not start product checkout.');
-    } finally {
-      setCheckoutLoading(false);
-    }
+    setCheckoutLoading(false);
+    setCommerceError('Product checkout is disabled. Product purchasing is coming soon.');
   }
 
   return (
@@ -2383,7 +3160,7 @@ function ProductsPanel() {
 
                 {item.recommendation ? (
                   <div className="mt-3 rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-3">
-                    <p className="text-sm font-black text-[#f4c430]">Recommended by Mara Chen</p>
+                    <p className="text-sm font-black text-[#f4c430]">Recommended by your professional</p>
                     <p className="mt-1 text-sm leading-6 text-white/72">{item.recommendation.reason}</p>
                     <p className="mt-1 text-xs font-bold text-white/48">{item.recommendation.frequency}</p>
                   </div>
@@ -2513,7 +3290,7 @@ function ProductsPanel() {
             disabled={!summary || checkoutLoading}
           >
             <CreditCard size={18} />
-            {checkoutLoading ? 'Opening Stripe...' : 'Checkout with Frizi'}
+            {checkoutLoading ? 'Opening Stripe...' : 'Preview checkout'}
           </button>
         </div>
 
@@ -2529,18 +3306,418 @@ function ProductsPanel() {
   );
 }
 
-function ClientPassportPanel() {
-  const passportUrl = 'https://frizi.ca/passport/client-demo-ari';
+function ClientPassportPanel({
+  clientSession,
+  isDemo,
+  onDeleteAccount,
+  onSignOut,
+}: {
+  clientSession: ClientSession | null;
+  isDemo: boolean;
+  onDeleteAccount: () => void;
+  onSignOut: () => void;
+}) {
+  return isDemo ? <LegacyPreviewClientPassportPanel /> : <ProductionClientPassportPanel clientSession={clientSession} onDeleteAccount={onDeleteAccount} onSignOut={onSignOut} />;
+}
+
+function ProductionClientPassportPanel({
+  clientSession,
+  onDeleteAccount,
+  onSignOut,
+}: {
+  clientSession: ClientSession | null;
+  onDeleteAccount: () => void;
+  onSignOut: () => void;
+}) {
+  const [clientId, setClientId] = useState('');
+  const [profilePhoto, setProfilePhoto] = useState<ClientPhoto | null>(null);
+  const [inspirationPhotos, setInspirationPhotos] = useState<ClientPhoto[]>([]);
+  const [hairPhotos, setHairPhotos] = useState<ClientPhoto[]>([]);
+  const [passport, setPassport] = useState<ClientPassport | null>(null);
+  const [mediaMessage, setMediaMessage] = useState('');
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [passportBusy, setPassportBusy] = useState(false);
+  const [captionDraft, setCaptionDraft] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadClientMedia() {
+      if (!clientSession?.accessToken || !isSupabaseConfigured) return;
+      setMediaMessage('');
+      try {
+        const supabase = createClient();
+        const { data: userResult, error: userError } = await supabase.auth.getUser();
+        if (userError || !userResult.user) return;
+        const ensuredClientId = await ensureClientRecord(userResult.user.id, clientSession.name, clientSession.email);
+        if (cancelled) return;
+        setClientId(ensuredClientId);
+        const photos = await loadSignedClientPhotos(ensuredClientId);
+        const nextPassport = await loadClientPassport();
+        if (cancelled) return;
+        setProfilePhoto(photos.find((photo) => photo.photoType === 'profile') || null);
+        setInspirationPhotos(photos.filter((photo) => photo.photoType === 'example_reference'));
+        setHairPhotos(photos.filter((photo) => photo.photoType === 'hair_history'));
+        setPassport(nextPassport);
+      } catch (error) {
+        if (!cancelled) setMediaMessage(error instanceof Error ? error.message : 'Could not load your photos.');
+      }
+    }
+
+    void loadClientMedia();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientSession]);
+
+  async function loadClientPassport() {
+    if (!clientSession?.accessToken) return null;
+    const response = await fetch('/api/client-passport', {
+      headers: { Authorization: `Bearer ${clientSession.accessToken}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Could not prepare your passport QR.');
+    return (payload.passport || null) as ClientPassport | null;
+  }
+
+  async function updatePassport(action: 'rotate' | 'revoke') {
+    if (!clientSession?.accessToken) {
+      setMediaMessage('Sign in before managing your hair passport.');
+      return;
+    }
+    setPassportBusy(true);
+    setMediaMessage('');
+    try {
+      const response = await fetch('/api/client-passport', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${clientSession.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not update your passport QR.');
+      setPassport((payload.passport || null) as ClientPassport | null);
+      setMediaMessage(action === 'rotate' ? 'New passport QR created. The old one no longer works.' : 'Passport QR revoked.');
+    } catch (error) {
+      setMediaMessage(error instanceof Error ? error.message : 'Could not update your passport QR.');
+    } finally {
+      setPassportBusy(false);
+    }
+  }
+
+  async function ensureClientRecord(authUserId: string, displayName: string, email: string) {
+    const supabase = createClient();
+    const { data: profile, error: profileError } = await supabase
+      .from('frizi_profiles')
+      .upsert(
+        {
+          auth_user_id: authUserId,
+          account_type: 'client',
+          display_name: displayName,
+          email,
+          status: 'active',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'auth_user_id' },
+      )
+      .select('id')
+      .single();
+    if (profileError) throw profileError;
+
+    const { data: existingClient, error: existingClientError } = await supabase.from('frizi_clients').select('id').eq('profile_id', profile.id).maybeSingle();
+    if (existingClientError) throw existingClientError;
+    if (existingClient?.id) return String(existingClient.id);
+
+    const { data: client, error: clientError } = await supabase
+      .from('frizi_clients')
+      .insert({
+        profile_id: profile.id,
+        preferred_name: displayName,
+        email,
+        account_claimed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+    if (clientError) throw clientError;
+    return String(client.id);
+  }
+
+  async function loadSignedClientPhotos(ensuredClientId: string) {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('frizi_client_photos')
+      .select('id, image_url, photo_type, caption, created_at')
+      .eq('client_id', ensuredClientId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const signed = await Promise.all(
+      (data || []).map(async (row: Record<string, unknown>) => {
+        const path = String(row.image_url || '');
+        const { data: signedUrl } = await supabase.storage.from('frizi-client-media').createSignedUrl(path, 60 * 30);
+        return {
+          id: String(row.id),
+          imagePath: path,
+          imageUrl: signedUrl?.signedUrl || '',
+          label: row.photo_type === 'profile' ? 'Profile photo' : row.photo_type === 'hair_history' ? 'Completed haircut' : 'Inspiration photo',
+          note: String(row.caption || ''),
+          photoType: String(row.photo_type || 'example_reference') as ClientPhoto['photoType'],
+        };
+      }),
+    );
+
+    return signed.filter((photo) => photo.imageUrl);
+  }
+
+  async function uploadClientPhoto(file: File, photoType: ClientPhoto['photoType']) {
+    if (!clientSession || !isSupabaseConfigured) {
+      setMediaMessage('Sign in before uploading photos.');
+      return;
+    }
+    setMediaBusy(true);
+    setMediaMessage('');
+    try {
+      const supabase = createClient();
+      const { data: userResult, error: userError } = await supabase.auth.getUser();
+      if (userError || !userResult.user) throw new Error('Sign in again before uploading photos.');
+      const ensuredClientId = clientId || (await ensureClientRecord(userResult.user.id, clientSession.name, clientSession.email));
+      setClientId(ensuredClientId);
+
+      const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '') || 'photo.jpg';
+      const path = `${userResult.user.id}/${photoType}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage.from('frizi-client-media').upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+      if (uploadError) throw uploadError;
+
+      if (photoType === 'profile' && profilePhoto?.imagePath) {
+        await supabase.storage.from('frizi-client-media').remove([profilePhoto.imagePath]);
+        await supabase.from('frizi_client_photos').delete().eq('id', profilePhoto.id);
+      }
+
+      const { data: inserted, error: photoError } = await supabase
+        .from('frizi_client_photos')
+        .insert({
+          client_id: ensuredClientId,
+          image_url: path,
+          photo_type: photoType,
+          consent_status: photoType === 'hair_history' ? 'private' : 'shared_with_professional',
+          caption: photoType === 'example_reference' ? captionDraft.trim() || null : null,
+          updated_at: new Date().toISOString(),
+        })
+        .select('id, image_url, photo_type, caption')
+        .single();
+      if (photoError) throw photoError;
+
+      if (photoType === 'profile') {
+        await supabase.from('frizi_clients').update({ profile_photo_url: path, updated_at: new Date().toISOString() }).eq('id', ensuredClientId);
+      }
+
+      const { data: signedUrl } = await supabase.storage.from('frizi-client-media').createSignedUrl(path, 60 * 30);
+      const nextPhoto: ClientPhoto = {
+        id: String(inserted.id),
+        imagePath: path,
+        imageUrl: signedUrl?.signedUrl || '',
+        label: photoType === 'profile' ? 'Profile photo' : 'Inspiration photo',
+        note: String(inserted.caption || ''),
+        photoType,
+      };
+      if (photoType === 'profile') setProfilePhoto(nextPhoto);
+      if (photoType === 'example_reference') {
+        setInspirationPhotos((current) => [nextPhoto, ...current]);
+        setCaptionDraft('');
+      }
+      setMediaMessage(photoType === 'profile' ? 'Profile photo updated.' : 'Inspiration photo uploaded.');
+    } catch (error) {
+      setMediaMessage(error instanceof Error ? error.message : 'Photo upload failed.');
+    } finally {
+      setMediaBusy(false);
+    }
+  }
+
+  async function removeClientPhoto(photo: ClientPhoto) {
+    if (!clientSession || !isSupabaseConfigured) return;
+    setMediaBusy(true);
+    setMediaMessage('');
+    try {
+      const supabase = createClient();
+      await supabase.storage.from('frizi-client-media').remove([photo.imagePath]);
+      const { error } = await supabase.from('frizi_client_photos').delete().eq('id', photo.id);
+      if (error) throw error;
+      if (photo.photoType === 'profile') {
+        setProfilePhoto(null);
+        if (clientId) await supabase.from('frizi_clients').update({ profile_photo_url: null, updated_at: new Date().toISOString() }).eq('id', clientId);
+      }
+      if (photo.photoType === 'example_reference') setInspirationPhotos((current) => current.filter((item) => item.id !== photo.id));
+      setMediaMessage('Photo removed.');
+    } catch (error) {
+      setMediaMessage(error instanceof Error ? error.message : 'Could not remove photo.');
+    } finally {
+      setMediaBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-5 space-y-4">
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <div className="flex items-center gap-4">
+          {profilePhoto ? (
+            <img className="h-20 w-20 rounded-3xl object-cover" src={profilePhoto.imageUrl} alt="Client profile" />
+          ) : (
+            <div className="grid h-20 w-20 place-items-center rounded-3xl bg-white/[0.06]">
+              <User className="text-[#f4c430]" size={30} />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-black">Profile photo</h2>
+            <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
+              This is your account image. It stays separate from inspiration and completed haircut photos.
+            </p>
+          </div>
+        </div>
+        <label className="mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black">
+          <Camera size={18} />
+          {profilePhoto ? 'Replace profile photo' : 'Upload profile photo'}
+          <input
+            className="sr-only"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+            disabled={mediaBusy || !clientSession}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void uploadClientPhoto(file, 'profile');
+              event.currentTarget.value = '';
+            }}
+          />
+        </label>
+        {profilePhoto ? (
+          <button className="mt-3 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white" type="button" disabled={mediaBusy} onClick={() => void removeClientPhoto(profilePhoto)}>
+            Remove profile photo
+          </button>
+        ) : null}
+      </div>
+
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Inspiration photos</h2>
+        <p className="mt-2 leading-7 text-white/68">Add photos of cuts, colours, and styles you want your professional to see.</p>
+        <textarea
+          className="mt-4 min-h-24 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
+          placeholder="Optional note for this inspiration photo"
+          value={captionDraft}
+          onChange={(event) => setCaptionDraft(event.target.value)}
+        />
+        <label className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black">
+          <Camera size={18} />
+          Upload inspiration photo
+          <input
+            className="sr-only"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+            disabled={mediaBusy || !clientSession}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void uploadClientPhoto(file, 'example_reference');
+              event.currentTarget.value = '';
+            }}
+          />
+        </label>
+        <PhotoBoard description="" onRemove={(photo) => void removeClientPhoto(photo as ClientPhoto)} photos={inspirationPhotos} title="" />
+      </div>
+
+      <PhotoBoard
+        description="Photos added after completed appointments will appear here with your consent."
+        photos={hairPhotos}
+        title="Completed haircut photos"
+      />
+
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <QrCode className="text-[#f4c430]" size={30} />
+        <h2 className="mt-4 text-2xl font-black">Hair passport QR</h2>
+        {clientSession && passport ? (
+          <>
+            <p className="mt-2 leading-7 text-white/68">
+              Share this with a professional so they can request access to your hair profile. You can rotate or revoke this QR any time.
+            </p>
+            <div className="mx-auto mt-5 max-w-xs rounded-3xl bg-white p-4">
+              <img
+                className="aspect-square w-full"
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=720x720&margin=18&data=${encodeURIComponent(passport.passportUrl)}`}
+                alt="Client hair passport QR code"
+              />
+            </div>
+            <p className="mt-4 break-all rounded-2xl bg-black/30 p-3 text-sm font-semibold text-white/62">{passport.passportUrl}</p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                className="min-h-12 rounded-2xl border border-white/15 px-4 text-sm font-black text-white disabled:opacity-50"
+                type="button"
+                disabled={passportBusy}
+                onClick={() => void updatePassport('rotate')}
+              >
+                Rotate QR
+              </button>
+              <button
+                className="min-h-12 rounded-2xl border border-red-300/30 px-4 text-sm font-black text-red-100 disabled:opacity-50"
+                type="button"
+                disabled={passportBusy}
+                onClick={() => void updatePassport('revoke')}
+              >
+                Revoke
+              </button>
+            </div>
+            <p className="mt-3 text-xs font-semibold leading-5 text-white/45">
+              Professional scan access still requires the Pro-side passport acceptance screen before private profile details are shown.
+            </p>
+          </>
+        ) : (
+          <p className="mt-2 leading-7 text-white/68">
+            {clientSession ? 'Preparing your secure passport QR...' : 'Sign in to prepare your client hair passport.'}
+          </p>
+        )}
+      </div>
+
+      {mediaMessage ? <p className="rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-4 py-3 text-sm font-bold text-[#f4c430]">{mediaMessage}</p> : null}
+
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <User className="text-[#f4c430]" size={30} />
+        <h2 className="mt-4 text-2xl font-black">Settings</h2>
+        <div className="mt-4 rounded-2xl border border-white/10">
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 font-black text-white">
+              Account
+              <ChevronDown className="transition group-open:rotate-180" size={18} />
+            </summary>
+            <div className="border-t border-white/10 p-3">
+              <button className="w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white" type="button" onClick={onSignOut} disabled={!clientSession}>
+                Sign out
+              </button>
+              <button className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-300/35 px-4 py-3 text-sm font-black text-red-100" type="button" onClick={onDeleteAccount} disabled={!clientSession}>
+                <Trash2 size={16} />
+                Delete account
+              </button>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LegacyPreviewClientPassportPanel() {
+  const passportUrl = 'https://frizi.ca/passport/preview';
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=720x720&margin=18&data=${encodeURIComponent(passportUrl)}`;
   const [exampleUploaded, setExampleUploaded] = useState(false);
   const [profileUpdated, setProfileUpdated] = useState(false);
-  const demoExample = {
-    id: 'example_uploaded_demo',
+  const previewExample = {
+    id: 'example_uploaded_preview',
     imageUrl: 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=900&q=80',
-    label: 'Uploaded demo example',
-    note: 'Client-added inspiration photo shared with the pro before booking.',
+    label: 'Uploaded example',
+    note: 'Client-added inspiration photo shared with the professional before booking.',
   };
-  const visibleExamples = exampleUploaded ? [...clientExamplePhotos, demoExample] : clientExamplePhotos;
+  const visibleExamples = exampleUploaded ? [...clientExamplePhotos, previewExample] : clientExamplePhotos;
 
   return (
     <div className="mt-5 space-y-4">
@@ -2597,30 +3774,43 @@ function PhotoBoard({
   actionLabel,
   description,
   onAction,
+  onRemove,
   photos,
   title,
 }: {
   actionLabel?: string;
   description: string;
   onAction?: () => void;
+  onRemove?: (photo: { id: string; imageUrl: string; label: string; note: string }) => void;
   photos: Array<{ id: string; imageUrl: string; label: string; note: string }>;
   title: string;
 }) {
   return (
     <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-      <h2 className="text-2xl font-black">{title}</h2>
-      <p className="mt-2 leading-7 text-white/68">{description}</p>
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        {photos.map((photo) => (
+      {title ? <h2 className="text-2xl font-black">{title}</h2> : null}
+      {description ? <p className="mt-2 leading-7 text-white/68">{description}</p> : null}
+      {photos.length > 0 ? (
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          {photos.map((photo) => (
           <article key={photo.id} className="overflow-hidden rounded-3xl bg-white/[0.06]">
             <img className="aspect-[4/5] w-full object-cover" src={photo.imageUrl} alt="" />
             <div className="p-3">
               <p className="font-black">{photo.label}</p>
               <p className="mt-1 text-sm font-semibold leading-5 text-white/58">{photo.note}</p>
+              {onRemove ? (
+                <button className="mt-3 rounded-xl border border-white/15 px-3 py-2 text-xs font-black text-white" type="button" onClick={() => onRemove(photo)}>
+                  Remove
+                </button>
+              ) : null}
             </div>
           </article>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm font-semibold text-white/58">
+          {title.toLowerCase().includes('completed') ? 'No haircut photos yet' : 'No photos uploaded yet'}
+        </div>
+      )}
       {actionLabel && onAction ? (
         <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black" type="button" onClick={onAction}>
           <Camera size={18} />
@@ -2652,216 +3842,33 @@ function Panel({ children, title }: { children: React.ReactNode; title: string }
   );
 }
 
-function BookingConfirmation({ booking, clientSession }: { booking: BookingRequest; clientSession: ClientSession | null }) {
-  const [tipChoice, setTipChoice] = useState<TipChoice>(defaultTipChoice);
-  const [customTip, setCustomTip] = useState('');
-  const [promoCodeDraft, setPromoCodeDraft] = useState('');
-  const [appliedPromoCode, setAppliedPromoCode] = useState('');
-  const [summary, setSummary] = useState<CheckoutSummary | null>(null);
-  const [checkoutError, setCheckoutError] = useState('');
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const customerEmail = clientSession?.email || 'guest@frizi.demo';
-  const customerId = customerIdFor(customerEmail);
-
-  const checkoutPayload = useMemo(
-    () => ({
-      kind: 'service_booking',
-      appointmentId: booking.eventId,
-      professionalId: booking.professionalId,
-      customerId,
-      customerEmail,
-      selectedServiceIds: [booking.serviceId],
-      promoCode: appliedPromoCode || undefined,
-      tipSelection: String(tipChoice),
-      customTipAmount: tipChoice === 'custom' ? customTip : undefined,
-      currency: 'cad',
-    }),
-    [appliedPromoCode, booking.eventId, booking.professionalId, booking.serviceId, customTip, customerEmail, customerId, tipChoice],
-  );
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setCheckoutError('');
-
-    async function loadSummary() {
-      try {
-        const response = await fetch('/api/checkout-summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(checkoutPayload),
-          signal: controller.signal,
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-          setSummary(null);
-          setCheckoutError(payload.error || 'Could not calculate checkout.');
-          return;
-        }
-        setSummary(payload.summary);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setCheckoutError(error instanceof Error ? error.message : 'Could not calculate checkout.');
-        }
-      }
-    }
-
-    loadSummary();
-    return () => controller.abort();
-  }, [checkoutPayload]);
-
-  async function startStripeCheckout() {
-    setCheckoutLoading(true);
-    setCheckoutError('');
-    try {
-      const response = await fetch('/api/create-checkout-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(checkoutPayload),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        setCheckoutError(payload.error || 'Could not start checkout.');
-        return;
-      }
-      if (payload.noCost) {
-        setSummary(payload.summary);
-        setCheckoutError(payload.message || 'No payment is due for this booking.');
-        return;
-      }
-      window.location.href = payload.url;
-    } catch (error) {
-      setCheckoutError(error instanceof Error ? error.message : 'Could not start checkout.');
-    } finally {
-      setCheckoutLoading(false);
-    }
-  }
-
-  const displayedTipOptions = summary?.tipOptions ?? [15, 18, 20, 25].map((percent) => ({
-    percent,
-    amountCents: Math.round(booking.servicePriceCents * (percent / 100)),
-  }));
-
+function BookingConfirmation({ booking }: { booking: BookingRequest; clientSession: ClientSession | null }) {
   return (
     <div className="mt-4 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 p-4">
       <p className="flex items-center gap-2 font-black text-emerald-300">
         <CheckCircle2 size={19} />
-        Booking request sent
+        Appointment request sent
       </p>
       <p className="mt-2 text-sm leading-6 text-white/70">
-        {booking.service} with {booking.professional} at {booking.time}. This demo creates a
-        pro-side event named <span className="font-black text-white">{booking.eventId}</span> with
-        the client's profile, request, photo consent, and notes attached.
+        Your request for {booking.service} with {booking.professional} has been sent.
       </p>
-      <p className="mt-3 flex items-center gap-2 rounded-xl bg-black/25 px-3 py-2 text-sm font-bold text-white/68">
-        <ShieldCheck size={17} className="text-[#f4c430]" />
-        Synced to Frizi Pro booking queue for the professional app demo.
-      </p>
-      <div className="mt-4 rounded-2xl border border-white/10 bg-[#101014] p-4">
-        <p className="flex items-center gap-2 text-lg font-black text-white">
-          <CreditCard size={19} className="text-[#f4c430]" />
-          Review and pay in Frizi
-        </p>
-        <p className="mt-1 text-sm leading-6 text-white/62">
-          Frizi recalculates services, discounts, taxes, deposits, and tips on the server before Stripe Checkout opens.
-        </p>
-        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
-          <label className="text-xs font-black uppercase tracking-[0.14em] text-white/50" htmlFor="promo-code">
-            Promo code
-          </label>
-          <div className="mt-2 flex gap-2">
-            <input
-              id="promo-code"
-              className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 font-bold text-white outline-none placeholder:text-white/35"
-              placeholder="FIRSTCUT25"
-              value={promoCodeDraft}
-              onChange={(event) => setPromoCodeDraft(event.target.value)}
-            />
-            <button className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-black" type="button" onClick={() => setAppliedPromoCode(promoCodeDraft.trim().toUpperCase())}>
-              Apply
-            </button>
-          </div>
-          {summary?.promotion ? (
-            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-[#f4c430]/12 px-3 py-2">
-              <p className="text-sm font-black text-[#f4c430]">{summary.promotion.name} applied</p>
-              <button className="text-sm font-black text-white" type="button" onClick={() => {
-                setAppliedPromoCode('');
-                setPromoCodeDraft('');
-              }}>
-                Remove
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <p className="mt-4 text-sm font-black text-white">Optional tip</p>
-        <p className="mt-1 text-sm leading-6 text-white/62">Suggested tips are calculated on the original service subtotal before discounts and tax.</p>
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          {displayedTipOptions.map(({ percent, amountCents }) => (
-            <button
-              key={percent}
-              className={`rounded-2xl px-3 py-3 text-sm font-black ${
-                tipChoice === percent ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
-              }`}
-              type="button"
-              onClick={() => setTipChoice(percent as TipChoice)}
-            >
-              {percent}% <span className="block text-xs opacity-75">{formatCurrency(amountCents)}</span>
-            </button>
-          ))}
-          <button
-            className={`rounded-2xl px-3 py-3 text-sm font-black ${
-              tipChoice === 'custom' ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
-            }`}
-            type="button"
-            onClick={() => setTipChoice('custom')}
-          >
-            Custom
-          </button>
-          <button
-            className={`rounded-2xl px-3 py-3 text-sm font-black ${
-              tipChoice === 'none' ? 'bg-[#f4c430] text-black' : 'bg-white/10 text-white'
-            }`}
-            type="button"
-            onClick={() => setTipChoice('none')}
-          >
-            No Tip
-          </button>
-        </div>
-        {tipChoice === 'custom' ? (
-          <label className="mt-3 block">
-            <span className="text-xs font-black uppercase tracking-[0.14em] text-white/50">Custom tip amount</span>
-            <input
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 font-bold text-white outline-none placeholder:text-white/35"
-              inputMode="decimal"
-              placeholder="$20.00"
-              value={customTip}
-              onChange={(event) => setCustomTip(event.target.value)}
-            />
-          </label>
-        ) : null}
-        <div className="mt-4 rounded-2xl bg-black/28 p-4">
-          <p className="mb-3 flex items-center gap-2 font-black text-white">
-            <ReceiptText size={18} className="text-[#f4c430]" />
-            Checkout summary
-          </p>
-          <ReceiptRow label="Service subtotal" value={formatCurrency(summary?.serviceSubtotalCents ?? booking.servicePriceCents)} />
-          {summary?.promotion ? <ReceiptRow label={`${summary.promotion.name} - ${summary.promotion.discountValue}%`} value={`-${formatCurrency(summary.discountCents)}`} highlight /> : null}
-          <ReceiptRow label="Discounted service subtotal" value={formatCurrency(summary?.discountedServiceSubtotalCents ?? booking.servicePriceCents)} />
-          <ReceiptRow label="Tax" value={formatCurrency(summary?.taxCents ?? 0)} />
-          {(summary?.depositCreditCents ?? 0) > 0 ? <ReceiptRow label="Deposit already paid" value={`-${formatCurrency(summary?.depositCreditCents ?? 0)}`} /> : null}
-          <ReceiptRow label="Optional tip" value={formatCurrency(summary?.tipCents ?? 0)} highlight />
-          <ReceiptRow label="Amount due now" value={formatCurrency(summary?.amountDueCents ?? booking.servicePriceCents)} strong />
-          {summary ? <p className="mt-3 text-xs font-bold text-white/48">Quote expires {new Date(summary.quoteExpiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Payment is finalized by Stripe webhook, not the browser redirect.</p> : null}
-        </div>
-        {checkoutError ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{checkoutError}</p> : null}
-        <button
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
-          type="button"
-          onClick={startStripeCheckout}
-          disabled={checkoutLoading || !summary}
-        >
-          {checkoutLoading ? 'Opening Stripe...' : 'Continue to secure payment'}
-          <ChevronRight size={18} />
+      <div className="mt-4 grid gap-2 rounded-2xl border border-white/10 bg-[#101014] p-4 text-sm">
+        <ReceiptRow label="Service" value={booking.service} />
+        <ReceiptRow label="Professional" value={booking.professional} />
+        <ReceiptRow label="Date" value={booking.date} />
+        <ReceiptRow label="Time" value={formatSlotTime(booking.time)} />
+        <ReceiptRow label="Status" value={booking.status === 'confirmed' ? 'Confirmed' : `Waiting for ${booking.professional} to confirm`} strong />
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <button className="rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black" type="button">
+          View appointment
         </button>
+        <button className="rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white" type="button">
+          Message {booking.professional.split(' ')[0]}
+        </button>
+        <a className="rounded-2xl border border-white/15 px-4 py-3 text-center text-sm font-black text-white" href="/">
+          Back to Frizi
+        </a>
       </div>
     </div>
   );
@@ -2891,12 +3898,30 @@ function parseMoneyToCents(value: string) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
 }
 
-function serviceIdFor(professionalId: string, serviceName: string) {
-  return `${professionalId}:${slug(serviceName)}`;
+function bookingFromApiAppointment(appointment: Record<string, unknown>): BookingRequest {
+  const scheduledStart = String(appointment.scheduledStart || appointment.starts_at || '');
+  const startDate = scheduledStart ? new Date(scheduledStart) : new Date();
+  const status = String(appointment.status || 'pending') as BookingRequest['status'];
+  return {
+    id: String(appointment.id || ''),
+    professionalId: String(appointment.professionalId || appointment.professional_id || ''),
+    professional: String(appointment.professional || 'Professional'),
+    service: String(appointment.service || 'Appointment'),
+    serviceId: String(appointment.serviceId || appointment.service_id || ''),
+    servicePriceCents: 0,
+    date: startDate.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }),
+    time: scheduledStart,
+    eventId: String(appointment.id || `appt_${Date.now().toString(36)}`),
+    status: ['pending', 'confirmed', 'declined', 'cancelled', 'completed'].includes(status) ? status : 'pending',
+    scheduledStart,
+    scheduledEnd: String(appointment.scheduledEnd || appointment.ends_at || ''),
+    paymentRequirement: String(appointment.paymentRequirement || appointment.payment_requirement || 'pay_at_appointment'),
+    paymentStatus: String(appointment.paymentStatus || appointment.payment_status || 'not_required'),
+  };
 }
 
-function customerIdFor(email: string) {
-  return `client_${slug(email || 'guest')}`;
+function serviceIdFor(professionalId: string, serviceName: string) {
+  return `${professionalId}:${slug(serviceName)}`;
 }
 
 function slug(value: string) {
@@ -2952,6 +3977,9 @@ function buildMonthCells(monthCursor: Date) {
 }
 
 function dateFromSlot(slot: string) {
+  const parsedSlot = new Date(slot);
+  if (!Number.isNaN(parsedSlot.getTime())) return startOfDay(parsedSlot);
+
   const now = new Date();
   const normalized = slot.toLowerCase();
   const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -2991,17 +4019,22 @@ function dateKey(date: Date) {
 }
 
 function formatSlotTime(slot: string) {
+  const parsedSlot = new Date(slot);
+  if (!Number.isNaN(parsedSlot.getTime())) {
+    return parsedSlot.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
+  }
+
   return slot.replace(/^(today|tomorrow|mon|tue|wed|thu|fri|sat|sun)\s+/i, '');
 }
 
-function rankProfessionals(query: string, filters: FilterState) {
+function rankProfessionals(profileList: Professional[], query: string, filters: FilterState) {
   const tokens = query
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
 
-  return filterLocalProfiles(professionals, filters).sort((a, b) => scoreProfile(b, tokens) - scoreProfile(a, tokens));
+  return filterLocalProfiles(profileList, filters).sort((a, b) => scoreProfile(b, tokens) - scoreProfile(a, tokens));
 }
 
 function filterLocalProfiles(profiles: Professional[], filters: FilterState) {
@@ -3016,7 +4049,7 @@ function filterLocalProfiles(profiles: Professional[], filters: FilterState) {
 
 function distanceToKm(distance: string) {
   const parsed = Number(distance.replace(/[^0-9.]/g, ''));
-  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function profileMatchesFilter(profile: Professional, option: string, kind: 'service' | 'specialty' | 'accessibility') {
@@ -3052,7 +4085,7 @@ function scoreProfile(profile: Professional, tokens: string[]) {
     if (profile.searchTerms.includes(token)) return score + 8;
     if (haystack.includes(token)) return score + 3;
     return score;
-  }, profile.id === 'mara' ? 2 : 0);
+  }, 0);
 }
 
 export default App;

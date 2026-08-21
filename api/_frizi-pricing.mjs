@@ -8,8 +8,8 @@ export const quoteTtlMinutes = Number(process.env.FRIZI_PRICE_QUOTE_TTL_MINUTES 
 export const pricingVersion = 'frizi_dynamic_pricing_v1';
 
 const professionals = [
-  { id: 'omar', name: 'Omar Rahman', salonId: 'salon_civic', salonName: 'Civic Barbering', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
-  { id: 'mara', name: 'Mara Chen', salonId: 'salon_hairline', salonName: 'Hairline Studio', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
+  { id: 'preview_pro_1', name: 'Preview Professional 1', salonId: 'preview_salon_1', salonName: 'Preview Studio 1', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
+  { id: 'preview_pro_2', name: 'Preview Professional 2', salonId: 'preview_salon_2', salonName: 'Preview Studio 2', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
   { id: 'niko', name: 'Niko Bell', salonId: 'salon_lane', salonName: 'Lane Studio', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
   { id: 'talia', name: 'Talia Brooks', salonId: 'salon_softshape', salonName: 'Soft Shape Studio', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
   { id: 'bea', name: 'Bea Santos', salonId: 'salon_curl', salonName: 'Curl Room', connectedAccountId: process.env.STRIPE_TEST_CONNECTED_ACCOUNT_ID || '' },
@@ -18,12 +18,12 @@ const professionals = [
 ];
 
 const services = [
-  ['omar', 'Fade and lineup', 5200, true],
-  ['omar', 'Fade, beard, and wash', 7800, true],
-  ['omar', 'Private-room haircut', 6500, true],
-  ['mara', 'Skin fade', 5800, true],
-  ['mara', 'Fade and curl taper', 7400, true],
-  ['mara', 'Private-room cut', 6800, true],
+  ['preview_pro_1', 'Fade and lineup', 5200, true],
+  ['preview_pro_1', 'Fade, beard, and wash', 7800, true],
+  ['preview_pro_1', 'Private-room haircut', 6500, true],
+  ['preview_pro_2', 'Skin fade', 5800, true],
+  ['preview_pro_2', 'Fade and curl taper', 7400, true],
+  ['preview_pro_2', 'Private-room cut', 6800, true],
   ['niko', 'Fade and lineup', 5000, true],
   ['niko', 'Fade and beard shape', 7600, true],
   ['niko', 'Textured crop cut', 6200, true],
@@ -52,31 +52,31 @@ const services = [
 
 const completedAppointments = [
   {
-    id: 'appt_returning_mara_001',
-    customerId: 'client_returning_demo',
-    professionalId: 'mara',
-    salonId: 'salon_hairline',
+    id: 'appt_returning_preview_001',
+    customerId: 'preview_returning_client',
+    professionalId: 'preview_pro_2',
+    salonId: 'preview_salon_2',
     status: 'completed',
     paymentStatus: 'paid',
     refunded: false,
-    serviceIds: [serviceIdFor('mara', 'Skin fade')],
+    serviceIds: [serviceIdFor('preview_pro_2', 'Skin fade')],
   },
   {
     id: 'appt_refunded_001',
-    customerId: 'client_refunded_demo',
-    professionalId: 'omar',
-    salonId: 'salon_civic',
+    customerId: 'preview_refunded_client',
+    professionalId: 'preview_pro_1',
+    salonId: 'preview_salon_1',
     status: 'completed',
     paymentStatus: 'refunded',
     refunded: true,
-    serviceIds: [serviceIdFor('omar', 'Fade and lineup')],
+    serviceIds: [serviceIdFor('preview_pro_1', 'Fade and lineup')],
   },
 ];
 
 const deposits = [
   {
-    appointmentId: 'appt_demo_deposit_balance',
-    paymentId: 'pay_deposit_demo_001',
+    appointmentId: 'appt_preview_deposit_balance',
+    paymentId: 'pay_deposit_preview_001',
     amountCents: 2000,
     currency: 'cad',
     status: 'paid',
@@ -87,7 +87,7 @@ const redemptions = [
   {
     id: 'redemption_existing_firstcut',
     promotionId: 'promo_first_cut_25',
-    customerId: 'client_used_promo_demo',
+    customerId: 'preview_used_promo_client',
     status: 'redeemed',
   },
 ];
@@ -363,7 +363,7 @@ function depositCreditFor(appointmentId, currency) {
 export function calculateAppointmentCheckout(input) {
   const currency = (input.currency || 'cad').toLowerCase();
   const customerId = input.customerId || 'guest_demo';
-  const professional = loadProfessional(input.professionalId || 'mara');
+  const professional = loadProfessional(input.professionalId || 'preview_pro_2');
   const selectedServiceIds = input.selectedServiceIds || (input.selectedServiceId ? [input.selectedServiceId] : []);
   const selectedServices = loadServices(professional.id, selectedServiceIds);
   const appointmentId = input.appointmentId || `quote_${professional.id}_${Date.now()}`;

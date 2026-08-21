@@ -19,8 +19,8 @@ const blockedClassifications = new Set([
 ]);
 
 const professionals = [
-  { id: 'mara', name: 'Mara Chen', salonId: 'salon_hairline', salonName: 'Hairline Studio' },
-  { id: 'omar', name: 'Omar Rahman', salonId: 'salon_civic', salonName: 'Civic Barbering' },
+  { id: 'preview_pro_1', name: 'Preview Professional 1', salonId: 'preview_salon_1', salonName: 'Preview Studio 1' },
+  { id: 'preview_pro_2', name: 'Preview Professional 2', salonId: 'preview_salon_2', salonName: 'Preview Studio 2' },
 ];
 
 export const brands = [
@@ -275,11 +275,11 @@ export const supplierListings = [
 
 export const recommendations = [
   {
-    id: 'rec_mara_ari_leavein',
-    customerId: 'client_ari_demo',
-    professionalId: 'mara',
+    id: 'rec_preview_leavein',
+    customerId: 'preview_client',
+    professionalId: 'preview_pro_1',
     salonId: 'salon_hairline',
-    appointmentId: 'hist_mara_001',
+    appointmentId: 'hist_preview_001',
     variantId: 'var_pattern_leave_in_289ml',
     reason: 'Recommended for maintaining curl shape between wash days.',
     usageInstructions: 'Start with a dime-size amount on damp ends and adjust after the next appointment.',
@@ -293,11 +293,11 @@ export const recommendations = [
     recommendedAt: '2026-07-14T16:00:00.000Z',
   },
   {
-    id: 'rec_mara_ari_mask',
-    customerId: 'client_ari_demo',
-    professionalId: 'mara',
+    id: 'rec_preview_mask',
+    customerId: 'preview_client',
+    professionalId: 'preview_pro_1',
     salonId: 'salon_hairline',
-    appointmentId: 'hist_mara_001',
+    appointmentId: 'hist_preview_001',
     variantId: 'var_briogeo_mask_240ml',
     reason: 'Recommended after colour service for softer-feeling ends.',
     usageInstructions: 'Use weekly, avoiding roots if hair gets flat.',
@@ -513,7 +513,7 @@ function allocateDiscount(items, discountCents) {
   });
 }
 
-export function getCommerceCatalogue(customerId = 'client_ari_demo') {
+export function getCommerceCatalogue(customerId = 'preview_client') {
   const recommendationMap = new Map(recommendations.filter((record) => record.customerId === customerId && record.active).map((record) => [record.variantId, record]));
   return variants.map((variant) => {
     const product = getProduct(variant.productId);
@@ -541,7 +541,7 @@ export function getCommerceCatalogue(customerId = 'client_ari_demo') {
 }
 
 export function calculateCommerceCart(input) {
-  const customerId = input.customerId || 'client_ari_demo';
+  const customerId = input.customerId || 'preview_client';
   const province = normalizeProvince(input.shippingAddress?.province || 'ON');
   const postalCode = normalizePostalCode(input.shippingAddress?.postalCode || 'M5V2T6');
   const currency = 'cad';
@@ -722,4 +722,3 @@ export function commerceMetadata(summary) {
     commission_total: String(summary.items.reduce((sum, item) => sum + item.commissionCents, 0)),
   };
 }
-

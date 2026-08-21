@@ -10,7 +10,7 @@ test('calculates first cut automatic promotion, tax, and 20 percent tip from ori
   const summary = calculateAppointmentCheckout({
     appointmentId: 'appt_test_first_cut',
     professionalId: 'talia',
-    customerId: 'client_new_demo',
+    customerId: 'preview_new_client',
     selectedServiceIds: [serviceIdFor('talia', 'Soft fade')],
     tipSelection: '20',
   });
@@ -29,9 +29,9 @@ test('rejects first cut promotion for a returning customer', () => {
     () =>
       calculateAppointmentCheckout({
         appointmentId: 'appt_test_returning',
-        professionalId: 'mara',
-        customerId: 'client_returning_demo',
-        selectedServiceIds: [serviceIdFor('mara', 'Skin fade')],
+        professionalId: 'preview_pro_2',
+        customerId: 'preview_returning_client',
+        selectedServiceIds: [serviceIdFor('preview_pro_2', 'Skin fade')],
         promoCode: 'FIRSTCUT25',
         tipSelection: 'none',
       }),
@@ -44,9 +44,9 @@ test('rejects expired and inactive promo codes', () => {
     () =>
       calculateAppointmentCheckout({
         appointmentId: 'appt_test_expired',
-        professionalId: 'omar',
-        customerId: 'client_new_demo_2',
-        selectedServiceIds: [serviceIdFor('omar', 'Fade and lineup')],
+        professionalId: 'preview_pro_1',
+        customerId: 'preview_new_client_2',
+        selectedServiceIds: [serviceIdFor('preview_pro_1', 'Fade and lineup')],
         promoCode: 'EXPIRED',
       }),
     /expired/,
@@ -56,9 +56,9 @@ test('rejects expired and inactive promo codes', () => {
     () =>
       calculateAppointmentCheckout({
         appointmentId: 'appt_test_inactive',
-        professionalId: 'omar',
-        customerId: 'client_new_demo_2',
-        selectedServiceIds: [serviceIdFor('omar', 'Fade and lineup')],
+        professionalId: 'preview_pro_1',
+        customerId: 'preview_new_client_2',
+        selectedServiceIds: [serviceIdFor('preview_pro_1', 'Fade and lineup')],
         promoCode: 'INACTIVE',
       }),
     /not active/,
@@ -71,7 +71,7 @@ test('supports fixed discount minimum subtotal and removes only the selected pro
       calculateAppointmentCheckout({
         appointmentId: 'appt_test_minimum',
         professionalId: 'niko',
-        customerId: 'client_new_demo_3',
+        customerId: 'preview_new_client_3',
         selectedServiceIds: [serviceIdFor('niko', 'Fade and lineup')],
         promoCode: 'FRIZI10',
         tipSelection: 'none',
@@ -82,7 +82,7 @@ test('supports fixed discount minimum subtotal and removes only the selected pro
   const summary = calculateAppointmentCheckout({
     appointmentId: 'appt_test_fixed',
     professionalId: 'niko',
-    customerId: 'client_new_demo_3',
+    customerId: 'preview_new_client_3',
     selectedServiceIds: [serviceIdFor('niko', 'Fade and beard shape')],
     promoCode: 'FRIZI10',
     tipSelection: 'none',
@@ -100,10 +100,10 @@ test('validates custom tips and rejects excessive amounts', () => {
 
 test('applies deposits once to the amount due and keeps tip separate', () => {
   const summary = calculateAppointmentCheckout({
-    appointmentId: 'appt_demo_deposit_balance',
-    professionalId: 'omar',
-    customerId: 'client_deposit_demo',
-    selectedServiceIds: [serviceIdFor('omar', 'Fade and lineup')],
+    appointmentId: 'appt_preview_deposit_balance',
+    professionalId: 'preview_pro_1',
+    customerId: 'preview_deposit_client',
+    selectedServiceIds: [serviceIdFor('preview_pro_1', 'Fade and lineup')],
     tipSelection: '15',
   });
 
@@ -118,7 +118,7 @@ test('prevents duplicate customer redemption of an already used offer', () => {
       calculateAppointmentCheckout({
         appointmentId: 'appt_test_duplicate_redemption',
         professionalId: 'jo',
-        customerId: 'client_used_promo_demo',
+        customerId: 'preview_used_promo_client',
         selectedServiceIds: [serviceIdFor('jo', 'Fine hair shaping')],
         promoCode: 'FIRSTCUT25',
       }),

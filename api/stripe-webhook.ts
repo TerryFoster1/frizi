@@ -2,6 +2,7 @@
 
 import Stripe from 'stripe';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createSupabaseServiceClient, isSupabaseServiceConfigured } from './_supabase.mjs';
 
 const processedEventIds = new Set<string>();
 
@@ -23,6 +24,83 @@ async function readRawBody(request: IncomingMessage) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString('utf8');
+}
+
+function eventCreatedAt(created: number) {
+  return new Date(created * 1000).toISOString();
+}
+
+function isUniqueViolation(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === '23505',
+  );
+}
+
+async function reserveWebhookEvent(event: Stripe.Event) {
+  if (!isSupabaseServiceConfigured()) {
+    if (processedEventIds.has(event.id)) {
+      return { duplicate: true, durable: false };
+    }
+    processedEventIds.add(event.id);
+    return { duplicate: false, durable: false };
+  }
+
+  const supabase = createSupabaseServiceClient();
+  const { error } = await supabase.from('frizi_stripe_webhook_events').insert({
+    stripe_event_id: event.id,
+    event_type: event.type,
+    livemode: event.livemode,
+    api_version: event.api_version,
+    event_created_at: eventCreatedAt(event.created),
+    processing_status: 'processing',
+    payload: event,
+  });
+
+  if (!error) {
+    return { duplicate: false, durable: true };
+  }
+
+  if (isUniqueViolation(error)) {
+    return { duplicate: true, durable: true };
+  }
+
+  console.warn('[frizi-payments] durable webhook idempotency unavailable', {
+    eventId: event.id,
+    eventType: event.type,
+    message: error.message,
+  });
+
+  if (processedEventIds.has(event.id)) {
+    return { duplicate: true, durable: false };
+  }
+  processedEventIds.add(event.id);
+  return { duplicate: false, durable: false };
+}
+
+async function completeWebhookEvent(eventId: string) {
+  if (!isSupabaseServiceConfigured()) {
+    return;
+  }
+
+  const supabase = createSupabaseServiceClient();
+  const { error } = await supabase
+    .from('frizi_stripe_webhook_events')
+    .update({
+      processing_status: 'processed',
+      processed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('stripe_event_id', eventId);
+
+  if (error) {
+    console.warn('[frizi-payments] webhook event processed but status update failed', {
+      eventId,
+      message: error.message,
+    });
+  }
 }
 
 export default async function handler(request: IncomingMessage, response: ServerResponse) {
@@ -51,12 +129,13 @@ export default async function handler(request: IncomingMessage, response: Server
     return sendJson(response, 400, { error: error instanceof Error ? error.message : 'Invalid webhook signature.' });
   }
 
+  const reservation = await reserveWebhookEvent(event);
+  if (reservation.duplicate) {
+    return sendJson(response, 200, { received: true, duplicate: true, durable: reservation.durable });
+  }
+
   switch (event.type) {
     case 'checkout.session.completed': {
-      if (processedEventIds.has(event.id)) {
-        return sendJson(response, 200, { received: true, duplicate: true });
-      }
-      processedEventIds.add(event.id);
       const session = event.data.object as Stripe.Checkout.Session;
       console.info('[frizi-payments] checkout completed', {
         id: session.id,
@@ -138,5 +217,7 @@ export default async function handler(request: IncomingMessage, response: Server
       console.info('[frizi-payments] unhandled stripe event', event.type);
   }
 
-  return sendJson(response, 200, { received: true });
+  await completeWebhookEvent(event.id);
+
+  return sendJson(response, 200, { received: true, durable: reservation.durable });
 }

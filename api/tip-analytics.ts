@@ -1,22 +1,20 @@
 /// <reference types="node" />
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isDemoRequest, sendJson, sendProductionDisabled } from './_environment.mjs';
+import { enforceRateLimit } from './_rate-limit.mjs';
 
-const records = [
-  { service: 'Curly shag refresh', client: 'Nora V.', serviceAmountCents: 11500, tipCents: 2300, totalPaidCents: 15295 },
-  { service: 'Low-maintenance short cut', client: 'Ari M.', serviceAmountCents: 5200, tipCents: 936, totalPaidCents: 6812 },
-  { service: 'Gloss refresh', client: 'Stacey Jones', serviceAmountCents: 14500, tipCents: 3625, totalPaidCents: 20010 },
-];
-
-function sendJson(response: ServerResponse, status: number, payload: unknown) {
-  response.statusCode = status;
-  response.setHeader('Content-Type', 'application/json');
-  response.end(JSON.stringify(payload));
-}
+const records: Array<{ service: string; client: string; serviceAmountCents: number; tipCents: number; totalPaidCents: number }> = [];
 
 export default async function handler(request: IncomingMessage, response: ServerResponse) {
   if (request.method !== 'GET') {
     return sendJson(response, 405, { error: 'Method not allowed' });
+  }
+
+  if (!(await enforceRateLimit(request, response, 'commerce_read'))) return;
+
+  if (!isDemoRequest(request)) {
+    return sendProductionDisabled(response, 'Tip analytics');
   }
 
   const tipsCollected = records.reduce((sum, record) => sum + record.tipCents, 0);
@@ -26,8 +24,8 @@ export default async function handler(request: IncomingMessage, response: Server
   return sendJson(response, 200, {
     grossRevenueCents: revenueIncludingTips,
     tipsCollectedCents: tipsCollected,
-    averageTipPercent: Math.round((tipsCollected / serviceRevenue) * 100),
-    averageTipPerAppointmentCents: Math.round(tipsCollected / records.length),
+    averageTipPercent: serviceRevenue > 0 ? Math.round((tipsCollected / serviceRevenue) * 100) : 0,
+    averageTipPerAppointmentCents: records.length > 0 ? Math.round(tipsCollected / records.length) : 0,
     revenueExcludingTipsCents: serviceRevenue,
     revenueIncludingTipsCents: revenueIncludingTips,
     highestTippingServices: [...records].sort((a, b) => b.tipCents - a.tipCents).map((record) => ({
