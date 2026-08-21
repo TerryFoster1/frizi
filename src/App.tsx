@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import type { Session as SupabaseSession, User as SupabaseUser } from '@supabase/supabase-js';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FocusEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient, isSupabaseConfigured } from './utils/supabase/client';
 
 type Service = {
@@ -1576,6 +1576,39 @@ function ClientAuthModal({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const [visibleHeight, setVisibleHeight] = useState('100dvh');
+
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    const originalOverscrollBehavior = document.body.style.overscrollBehavior;
+
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+
+    function updateVisibleHeight() {
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      setVisibleHeight(`${Math.floor(viewportHeight)}px`);
+    }
+
+    updateVisibleHeight();
+    window.visualViewport?.addEventListener('resize', updateVisibleHeight);
+    window.visualViewport?.addEventListener('scroll', updateVisibleHeight);
+    window.addEventListener('resize', updateVisibleHeight);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.overscrollBehavior = originalOverscrollBehavior;
+      window.visualViewport?.removeEventListener('resize', updateVisibleHeight);
+      window.visualViewport?.removeEventListener('scroll', updateVisibleHeight);
+      window.removeEventListener('resize', updateVisibleHeight);
+    };
+  }, []);
+
+  function keepFieldVisible(event: FocusEvent<HTMLInputElement>) {
+    window.setTimeout(() => {
+      event.currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 90);
+  }
 
   async function continueWithGoogle() {
     setError('');
@@ -1707,13 +1740,25 @@ function ClientAuthModal({
     }
   }
 
+  const sheetStyle = {
+    '--frizi-client-auth-visible-height': visibleHeight,
+    maxHeight:
+      'calc(var(--frizi-client-auth-visible-height) - max(0.75rem, env(safe-area-inset-top)) - max(0.75rem, env(safe-area-inset-bottom)))',
+  } as CSSProperties;
+
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/72 px-4 backdrop-blur-sm">
-      <section className="w-full max-w-md rounded-[32px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60">
-        <div className="flex items-start justify-between gap-4">
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center overflow-hidden bg-black/72 px-3 backdrop-blur-sm sm:items-center sm:px-4"
+      style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))', paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+    >
+      <section
+        className="flex w-full max-w-md flex-col overflow-hidden rounded-[28px] border border-white/12 bg-[#151519] shadow-2xl shadow-black/60"
+        style={sheetStyle}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-3 pt-4 sm:px-5 sm:pt-5">
           <div>
             <p className="text-sm font-black text-[#f4c430]">{mode === 'signup' ? 'Free client account' : 'Welcome back'}</p>
-            <h2 className="mt-1 text-3xl font-black">
+            <h2 className="mt-1 text-2xl font-black sm:text-3xl">
               {mode === 'signup' ? 'Create your free Frizi account' : 'Sign in to Frizi'}
             </h2>
             {intent === 'booking' ? (
@@ -1733,80 +1778,84 @@ function ClientAuthModal({
           </button>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 rounded-2xl border border-white/10 bg-black/30 p-1">
-          <button
-            className="col-span-2 mb-3 flex min-h-14 items-center justify-center gap-3 rounded-2xl bg-white px-4 font-black text-black disabled:opacity-60"
-            type="button"
-            onClick={continueWithGoogle}
-            disabled={loading}
-          >
-            <span className="grid h-6 w-6 place-items-center rounded-full bg-black text-sm text-[#f4c430]" aria-hidden="true">G</span>
-            Continue with Google
-          </button>
-          <div className="col-span-2 mb-3 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs font-black lowercase text-white/50" aria-hidden="true">
-            <span className="h-px bg-white/10" />
-            <strong>or</strong>
-            <span className="h-px bg-white/10" />
-          </div>
-          {(['signup', 'signin'] as const).map((item) => (
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 pt-1 [-webkit-overflow-scrolling:touch] sm:px-5">
+          <div className="grid grid-cols-2 rounded-2xl border border-white/10 bg-black/30 p-1">
             <button
-              key={item}
-              className={`rounded-xl px-3 py-3 text-sm font-black ${mode === item ? 'bg-[#f4c430] text-black' : 'text-white/70'}`}
+              className="col-span-2 mb-2 flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-white px-4 font-black text-black disabled:opacity-60"
               type="button"
-              onClick={() => setMode(item)}
+              onClick={continueWithGoogle}
+              disabled={loading}
             >
-              {item === 'signup' ? 'Create account' : 'Sign in'}
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-black text-sm text-[#f4c430]" aria-hidden="true">G</span>
+              Continue with Google
             </button>
-          ))}
-        </div>
+            <div className="col-span-2 mb-2 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs font-black lowercase text-white/50" aria-hidden="true">
+              <span className="h-px bg-white/10" />
+              <strong>or</strong>
+              <span className="h-px bg-white/10" />
+            </div>
+            {(['signup', 'signin'] as const).map((item) => (
+              <button
+                key={item}
+                className={`rounded-xl px-3 py-3 text-sm font-black ${mode === item ? 'bg-[#f4c430] text-black' : 'text-white/70'}`}
+                type="button"
+                onClick={() => setMode(item)}
+              >
+                {item === 'signup' ? 'Create account' : 'Sign in'}
+              </button>
+            ))}
+          </div>
 
-        {mode === 'signup' ? (
-          <>
-            <label className="mt-5 block text-sm font-black text-white" htmlFor="client-auth-name">
-              Name
-            </label>
-            <input
-              id="client-auth-name"
-              className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Your name"
-            />
-          </>
-        ) : null}
+          {mode === 'signup' ? (
+            <>
+              <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-name">
+                Name
+              </label>
+              <input
+                id="client-auth-name"
+                className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                onFocus={keepFieldVisible}
+                placeholder="Your name"
+                autoComplete="name"
+              />
+            </>
+          ) : null}
 
-        <label className={`${mode === 'signup' ? 'mt-4' : 'mt-5'} block text-sm font-black text-white`} htmlFor="client-auth-email">
-          Email
-        </label>
-        <input
-          id="client-auth-email"
-          className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          placeholder="you@example.com"
-          type="email"
-        />
+          <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-email">
+            Email
+          </label>
+          <input
+            id="client-auth-email"
+            className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            onFocus={keepFieldVisible}
+            placeholder="you@example.com"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+          />
 
-        <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-password">
-          {mode === 'signup' ? 'Create password' : 'Password'}
-        </label>
-        <input
-          id="client-auth-password"
-          className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-4 font-semibold text-white outline-none placeholder:text-white/38"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          placeholder={mode === 'signup' ? 'Create password' : 'Password'}
-          type="password"
-        />
+          <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-password">
+            {mode === 'signup' ? 'Create password' : 'Password'}
+          </label>
+          <input
+            id="client-auth-password"
+            className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            onFocus={keepFieldVisible}
+            placeholder={mode === 'signup' ? 'Create password' : 'Password'}
+            type="password"
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          />
 
-        {error ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{error}</p> : null}
-        {notice ? <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-3 py-2 text-sm font-bold text-[#f4c430]">{notice}</p> : null}
+          {error ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{error}</p> : null}
+          {notice ? <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-3 py-2 text-sm font-bold text-[#f4c430]">{notice}</p> : null}
 
-        <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-4 font-black text-black disabled:opacity-60" type="button" onClick={submitAuth} disabled={loading}>
-          <User size={18} />
-          {loading ? 'Please wait...' : mode === 'signup' ? 'Create free account' : 'Sign in'}
-        </button>
-        <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
+          <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
           {intent === 'promo'
             ? 'Promos only apply when booking and paying through Frizi.'
             : intent === 'booking'
@@ -1814,7 +1863,15 @@ function ClientAuthModal({
               : intent === 'invite'
                 ? 'This connection is free. Marketing messages need separate consent.'
                 : 'Use your Frizi account to connect with professionals, keep hair photos, and manage bookings.'}
-        </p>
+          </p>
+        </div>
+
+        <div className="shrink-0 border-t border-white/10 bg-[#151519]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-5">
+          <button className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-3 font-black text-black disabled:opacity-60" type="button" onClick={submitAuth} disabled={loading}>
+            <User size={18} />
+            {loading ? 'Please wait...' : mode === 'signup' ? 'Create free account' : 'Sign in'}
+          </button>
+        </div>
       </section>
     </div>
   );
