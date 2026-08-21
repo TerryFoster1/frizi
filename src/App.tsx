@@ -1287,6 +1287,49 @@ function trackClientEvent(event: string, metadata: Record<string, string>) {
   console.info('[frizi-client-analytics]', event, metadata);
 }
 
+function makeFriziTraceId() {
+  const source = window.crypto?.getRandomValues ? window.crypto.getRandomValues(new Uint8Array(6)) : null;
+  const value = source
+    ? Array.from(source, (byte) => byte.toString(36).padStart(2, '0')).join('').slice(0, 6)
+    : Math.random().toString(36).slice(2, 8);
+  return `FRZ-${value.toUpperCase()}`;
+}
+
+function maskEmail(email: string) {
+  const [localPart = '', domain = ''] = email.trim().split('@');
+  if (!domain) return email.trim();
+  const visible = localPart.slice(0, 2);
+  return `${visible || '*'}***@${domain}`;
+}
+
+function getAuthErrorStatus(error: unknown) {
+  const authError = error as { status?: number; code?: string; name?: string; message?: string } | null;
+  return {
+    status: typeof authError?.status === 'number' ? authError.status : null,
+    code: String(authError?.code || authError?.name || ''),
+    message: String(authError?.message || ''),
+  };
+}
+
+async function recordClientAuthDiagnostic(payload: Record<string, unknown>) {
+  const safePayload = {
+    ...payload,
+    route: window.location.pathname,
+    timestamp: new Date().toISOString(),
+  };
+  console.info('[frizi-client-auth-diagnostic]', safePayload);
+  try {
+    await fetch('/api/client-auth-diagnostics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(safePayload),
+      keepalive: true,
+    });
+  } catch {
+    // Diagnostics are best-effort and must never block auth.
+  }
+}
+
 function getClientDisplayName(user: SupabaseUser, fallback = 'Frizi client') {
   return String(user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || fallback).trim();
 }
@@ -1575,8 +1618,15 @@ function ClientAuthModal({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [authTraceId, setAuthTraceId] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resending, setResending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [visibleHeight, setVisibleHeight] = useState('100dvh');
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -1604,10 +1654,52 @@ function ClientAuthModal({
     };
   }, []);
 
+  useEffect(() => {
+    if (!resendCooldown) return;
+    const timer = window.setInterval(() => {
+      setResendCooldown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
+
   function keepFieldVisible(event: FocusEvent<HTMLInputElement>) {
     window.setTimeout(() => {
       event.currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }, 90);
+  }
+
+  function switchMode(nextMode: 'signup' | 'signin') {
+    setMode(nextMode);
+    setError('');
+    setNotice('');
+    setVerificationEmail('');
+    setAuthTraceId('');
+  }
+
+  function focusNextField(nextField: 'email' | 'password') {
+    window.setTimeout(() => {
+      const input = nextField === 'email' ? emailInputRef.current : passwordInputRef.current;
+      input?.focus();
+      input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 10);
+  }
+
+  function handleFieldKeyDown(event: React.KeyboardEvent<HTMLInputElement>, nextField?: 'email' | 'password') {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    if (nextField) {
+      focusNextField(nextField);
+      return;
+    }
+    void submitAuth();
+  }
+
+  function setUnexpectedSignupError(traceId: string, message = "We couldn't create your account.") {
+    setError(`${message} Error ID: ${traceId}`);
+  }
+
+  function inviteReturnPath() {
+    return getSafeClientOAuthReturnPath();
   }
 
   async function continueWithGoogle() {
@@ -1660,14 +1752,17 @@ function ClientAuthModal({
     const trimmedEmail = email.trim();
     setError('');
     setNotice('');
+    setVerificationEmail('');
 
     if (mode === 'signup' && !trimmedName) {
       setError('Add your name to continue.');
+      nameInputRef.current?.focus();
       return;
     }
 
     if (!trimmedEmail.includes('@') || password.length < 6) {
       setError('Enter a valid email and a password with at least 6 characters.');
+      (!trimmedEmail.includes('@') ? emailInputRef.current : passwordInputRef.current)?.focus();
       return;
     }
 
@@ -1677,14 +1772,26 @@ function ClientAuthModal({
     }
 
     setLoading(true);
+    const traceId = makeFriziTraceId();
+    const startedAt = Date.now();
+    setAuthTraceId(traceId);
     try {
       const supabase = createClient();
-      const returnPath = getSafeClientOAuthReturnPath();
+      const returnPath = inviteReturnPath();
+      const redirectUrl = `${window.location.origin}${returnPath}`;
       if (intent === 'invite') writePendingInviteContext(inviteTokenFromPath());
       trackClientEvent('auth_started', {
         intent,
         method: mode,
         route: returnPath,
+      });
+      void recordClientAuthDiagnostic({
+        event: 'signup_submit_started',
+        traceId,
+        intent,
+        method: mode,
+        stage: 'validation_passed',
+        redirectUrl,
       });
       window.sessionStorage.setItem(
         clientOAuthContextStorageKey,
@@ -1696,33 +1803,119 @@ function ClientAuthModal({
         }),
       );
       if (mode === 'signup') {
+        void recordClientAuthDiagnostic({
+          event: 'signup_supabase_call_started',
+          traceId,
+          intent,
+          method: mode,
+          stage: 'supabase_sign_up',
+          redirectUrl,
+        });
         const { data, error } = await supabase.auth.signUp({
           email: trimmedEmail,
           password,
           options: {
             data: { full_name: trimmedName, account_type: 'client' },
-            emailRedirectTo: `${window.location.origin}${returnPath}`,
+            emailRedirectTo: redirectUrl,
           },
         });
 
-        if (error) throw error;
-        if (!data.session) {
-          setNotice(
-            intent === 'invite'
-              ? "Check your email to verify your Frizi account. We'll connect you when you return and sign in."
-              : intent === 'booking'
-              ? 'Check your email to verify your Frizi account. Your selected appointment is saved for when you return and sign in.'
-              : 'Check your email to verify your Frizi account, then return to Frizi and sign in.',
-          );
+        const identitiesCount = Array.isArray(data.user?.identities) ? data.user.identities.length : null;
+        const emailConfirmed = Boolean(data.user?.email_confirmed_at);
+        const existingAccountLikely = Boolean(data.user && identitiesCount === 0 && !data.session && !emailConfirmed);
+        void recordClientAuthDiagnostic({
+          event: 'signup_supabase_call_returned',
+          traceId,
+          intent,
+          method: mode,
+          stage: 'supabase_returned',
+          elapsedMs: Date.now() - startedAt,
+          status: getAuthErrorStatus(error).status,
+          errorCode: getAuthErrorStatus(error).code,
+          message: getAuthErrorStatus(error).message,
+          hasUser: Boolean(data.user),
+          hasSession: Boolean(data.session),
+          identitiesCount,
+          emailConfirmed,
+          existingAccountLikely,
+          redirectUrl,
+        });
+
+        if (error) {
+          const authError = getAuthErrorStatus(error);
+          const lowerMessage = authError.message.toLowerCase();
+          void recordClientAuthDiagnostic({
+            event: 'signup_failed',
+            traceId,
+            intent,
+            method: mode,
+            stage: 'supabase_error',
+            elapsedMs: Date.now() - startedAt,
+            status: authError.status,
+            errorCode: authError.code,
+            message: authError.message,
+            redirectUrl,
+          });
+          if (authError.status === 429 || lowerMessage.includes('rate limit')) {
+            setUnexpectedSignupError(traceId, "We couldn't send the verification email right now. Please try again in a few minutes.");
+          } else if (lowerMessage.includes('email') && (lowerMessage.includes('send') || lowerMessage.includes('smtp') || lowerMessage.includes('mailer'))) {
+            setUnexpectedSignupError(traceId, "We couldn't send the verification email right now. Please try again in a few minutes.");
+          } else if (authError.status === 400 || lowerMessage.includes('password') || lowerMessage.includes('invalid')) {
+            setError(authError.message || 'Please check the highlighted fields and try again.');
+          } else {
+            setUnexpectedSignupError(traceId);
+          }
           return;
         }
 
+        if (existingAccountLikely) {
+          setMode('signin');
+          setNotice('An account may already exist with this email. Sign in instead, or use Continue with Google if that is how you created it.');
+          setVerificationEmail('');
+          window.setTimeout(() => passwordInputRef.current?.focus(), 50);
+          return;
+        }
+
+        if (!data.session) {
+          setVerificationEmail(trimmedEmail);
+          setNotice(`We sent a verification link to ${maskEmail(trimmedEmail)}.`);
+          setResendCooldown(60);
+          return;
+        }
+
+        void recordClientAuthDiagnostic({
+          event: 'signup_user_created',
+          traceId,
+          intent,
+          method: mode,
+          stage: 'session_created',
+          elapsedMs: Date.now() - startedAt,
+          hasUser: true,
+          hasSession: true,
+          identitiesCount,
+          emailConfirmed,
+          redirectUrl,
+        });
         onComplete({ name: trimmedName, email: trimmedEmail, accessToken: data.session.access_token }, true);
         return;
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password });
-      if (error) throw error;
+      if (error) {
+        const authError = getAuthErrorStatus(error);
+        void recordClientAuthDiagnostic({
+          event: 'signin_failed',
+          traceId,
+          intent,
+          method: mode,
+          stage: 'supabase_error',
+          elapsedMs: Date.now() - startedAt,
+          status: authError.status,
+          errorCode: authError.code,
+          message: authError.message,
+        });
+        throw error;
+      }
       if (!data.session) {
         setNotice('Sign in needs email verification first. Check your inbox, then try again.');
         return;
@@ -1734,9 +1927,73 @@ function ClientAuthModal({
         accessToken: data.session.access_token,
       }, false);
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : 'Frizi could not sign you in.');
+      if (mode === 'signin') {
+        setError(authError instanceof Error ? authError.message : 'Frizi could not sign you in.');
+      } else {
+        setUnexpectedSignupError(authTraceId || traceId);
+      }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function resendVerificationEmail() {
+    const trimmedEmail = (verificationEmail || email).trim();
+    if (!trimmedEmail || resending || resendCooldown > 0) return;
+
+    setError('');
+    setNotice('');
+    setResending(true);
+    const traceId = authTraceId || makeFriziTraceId();
+    const startedAt = Date.now();
+    setAuthTraceId(traceId);
+
+    try {
+      const returnPath = inviteReturnPath();
+      const redirectUrl = `${window.location.origin}${returnPath}`;
+      if (intent === 'invite') writePendingInviteContext(inviteTokenFromPath());
+      void recordClientAuthDiagnostic({
+        event: 'signup_resend_started',
+        traceId,
+        intent,
+        method: 'resend',
+        stage: 'resend_signup',
+        redirectUrl,
+      });
+      const { error } = await createClient().auth.resend({
+        type: 'signup',
+        email: trimmedEmail,
+        options: {
+          emailRedirectTo: redirectUrl,
+        },
+      });
+      const authError = getAuthErrorStatus(error);
+      void recordClientAuthDiagnostic({
+        event: error ? 'signup_resend_failed' : 'signup_resend_succeeded',
+        traceId,
+        intent,
+        method: 'resend',
+        stage: 'resend_returned',
+        elapsedMs: Date.now() - startedAt,
+        status: authError.status,
+        errorCode: authError.code,
+        message: authError.message,
+        redirectUrl,
+      });
+
+      if (error) {
+        if (authError.status === 429 || authError.message.toLowerCase().includes('rate limit')) {
+          setError('Please wait a moment before requesting another email.');
+        } else {
+          setError("We couldn't send another verification email right now.");
+        }
+        return;
+      }
+
+      setNotice(`Verification email sent to ${maskEmail(trimmedEmail)}. Please check your inbox and spam folder.`);
+      setResendCooldown(60);
+    } finally {
+      setResending(false);
     }
   }
 
@@ -1755,30 +2012,48 @@ function ClientAuthModal({
         className="flex w-full max-w-md flex-col overflow-hidden rounded-[28px] border border-white/12 bg-[#151519] shadow-2xl shadow-black/60"
         style={sheetStyle}
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-3 pt-4 sm:px-5 sm:pt-5">
+        <div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
           <div>
             <p className="text-sm font-black text-[#f4c430]">{mode === 'signup' ? 'Free client account' : 'Welcome back'}</p>
             <h2 className="mt-1 text-2xl font-black sm:text-3xl">
-              {mode === 'signup' ? 'Create your free Frizi account' : 'Sign in to Frizi'}
+              {verificationEmail ? 'Check your email' : mode === 'signup' ? 'Create your Frizi account' : 'Sign in to Frizi'}
             </h2>
-            {intent === 'booking' ? (
-              <p className="mt-2 text-sm font-bold leading-6 text-white/68">Book and manage appointments directly with your stylist.</p>
-            ) : intent === 'promo' ? (
-              <p className="mt-2 text-sm font-bold leading-6 text-white/68">Sign up for exclusive deals and promos.</p>
-            ) : intent === 'invite' ? (
-              <p className="mt-2 text-sm font-bold leading-6 text-white/68">Connect with your professional and keep your Frizi profile ready for future visits.</p>
-            ) : (
-              <p className="mt-2 text-sm font-bold leading-6 text-white/68">
-                Manage your bookings, save your hair profile and inspiration photos, connect with your stylist, and receive discounts and promotions.
-              </p>
-            )}
           </div>
           <button className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 text-white/70" type="button" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 pt-1 [-webkit-overflow-scrolling:touch] sm:px-5">
+        <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-1 [-webkit-overflow-scrolling:touch] sm:px-5" onSubmit={(event) => { event.preventDefault(); void submitAuth(); }}>
+          {verificationEmail ? (
+            <div className="rounded-3xl border border-[#f4c430]/25 bg-[#f4c430]/10 p-4">
+              <p className="text-sm font-bold leading-6 text-white/75">We sent a verification link to:</p>
+              <p className="mt-2 text-lg font-black text-[#f4c430]">{maskEmail(verificationEmail)}</p>
+              <p className="mt-3 text-sm font-semibold leading-6 text-white/65">
+                Click the link in your email, then return to Frizi. Your invite connection is saved.
+              </p>
+              <button
+                className="mt-4 flex min-h-11 w-full items-center justify-center rounded-2xl border border-[#f4c430]/35 px-4 text-sm font-black text-[#f4c430] disabled:opacity-50"
+                type="button"
+                onClick={resendVerificationEmail}
+                disabled={resending || resendCooldown > 0}
+              >
+                {resending ? 'Sending...' : resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : 'Resend email'}
+              </button>
+              <button
+                className="mt-3 w-full text-center text-sm font-black text-white/70 underline decoration-white/25 underline-offset-4"
+                type="button"
+                onClick={() => {
+                  setVerificationEmail('');
+                  setNotice('');
+                  setError('');
+                }}
+              >
+                Change email address
+              </button>
+            </div>
+          ) : (
+            <>
           <div className="grid grid-cols-2 rounded-2xl border border-white/10 bg-black/30 p-1">
             <button
               className="col-span-2 mb-2 flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-white px-4 font-black text-black disabled:opacity-60"
@@ -1799,7 +2074,7 @@ function ClientAuthModal({
                 key={item}
                 className={`rounded-xl px-3 py-3 text-sm font-black ${mode === item ? 'bg-[#f4c430] text-black' : 'text-white/70'}`}
                 type="button"
-                onClick={() => setMode(item)}
+                onClick={() => switchMode(item)}
               >
                 {item === 'signup' ? 'Create account' : 'Sign in'}
               </button>
@@ -1813,12 +2088,15 @@ function ClientAuthModal({
               </label>
               <input
                 id="client-auth-name"
+                ref={nameInputRef}
                 className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onFocus={keepFieldVisible}
+                onKeyDown={(event) => handleFieldKeyDown(event, 'email')}
                 placeholder="Your name"
                 autoComplete="name"
+                enterKeyHint="next"
               />
             </>
           ) : null}
@@ -1828,14 +2106,17 @@ function ClientAuthModal({
           </label>
           <input
             id="client-auth-email"
+            ref={emailInputRef}
             className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             onFocus={keepFieldVisible}
+            onKeyDown={(event) => handleFieldKeyDown(event, 'password')}
             placeholder="you@example.com"
             type="email"
             autoComplete="email"
             inputMode="email"
+            enterKeyHint="next"
           />
 
           <label className="mt-4 block text-sm font-black text-white" htmlFor="client-auth-password">
@@ -1843,35 +2124,34 @@ function ClientAuthModal({
           </label>
           <input
             id="client-auth-password"
+            ref={passwordInputRef}
             className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             onFocus={keepFieldVisible}
+            onKeyDown={(event) => handleFieldKeyDown(event)}
             placeholder={mode === 'signup' ? 'Create password' : 'Password'}
             type="password"
             autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            enterKeyHint="done"
           />
 
           {error ? <p className="mt-3 rounded-2xl bg-red-500/12 px-3 py-2 text-sm font-bold text-red-100">{error}</p> : null}
           {notice ? <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-3 py-2 text-sm font-bold text-[#f4c430]">{notice}</p> : null}
 
-          <p className="mt-4 text-center text-sm font-semibold leading-6 text-white/55">
-          {intent === 'promo'
-            ? 'Promos only apply when booking and paying through Frizi.'
-            : intent === 'booking'
-              ? 'After you sign in, Frizi will bring you back to this appointment request.'
-              : intent === 'invite'
-                ? 'This connection is free. Marketing messages need separate consent.'
-                : 'Use your Frizi account to connect with professionals, keep hair photos, and manage bookings.'}
-          </p>
-        </div>
-
-        <div className="shrink-0 border-t border-white/10 bg-[#151519]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-5">
-          <button className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-3 font-black text-black disabled:opacity-60" type="button" onClick={submitAuth} disabled={loading}>
+          <button className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 py-3 font-black text-black disabled:opacity-60" type="submit" disabled={loading}>
             <User size={18} />
-            {loading ? 'Please wait...' : mode === 'signup' ? 'Create free account' : 'Sign in'}
+            {loading ? (mode === 'signup' ? 'Creating account...' : 'Signing in...') : mode === 'signup' ? 'Create free account' : 'Sign in'}
           </button>
-        </div>
+          <p className="mt-3 text-center text-sm font-semibold leading-6 text-white/55">
+            {mode === 'signup' ? 'Existing account?' : 'New to Frizi?'}{' '}
+            <button className="font-black text-[#f4c430]" type="button" onClick={() => switchMode(mode === 'signup' ? 'signin' : 'signup')}>
+              {mode === 'signup' ? 'Sign in' : 'Create account'}
+            </button>
+          </p>
+            </>
+          )}
+        </form>
       </section>
     </div>
   );

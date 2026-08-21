@@ -5,6 +5,7 @@ const scopeDefaults = {
   invite_lookup: { limit: 90, windowSeconds: 60 },
   invite_accept: { limit: 12, windowSeconds: 60 },
   client_passport: { limit: 20, windowSeconds: 60 },
+  client_auth_diagnostic: { limit: 30, windowSeconds: 60 },
   client_booking: { limit: 10, windowSeconds: 60 },
   client_delete_account: { limit: 4, windowSeconds: 60 },
   checkout: { limit: 12, windowSeconds: 60 },
