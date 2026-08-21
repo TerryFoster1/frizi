@@ -5,8 +5,10 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   CreditCard,
   MapPin,
+  MessageCircle,
   Mic,
   QrCode,
   ReceiptText,
@@ -41,6 +43,7 @@ type Service = {
   name: string;
   duration: string;
   price: string;
+  priceCents?: number;
   durationMinutes?: number;
   bufferBeforeMinutes?: number;
   bufferAfterMinutes?: number;
@@ -467,16 +470,6 @@ const searchSuggestionCategories = [
   },
 ] as const;
 
-const completedAppointmentHistory = [] as Array<{
-  id: string;
-  professional: string;
-  service: string;
-  date: string;
-  servicePriceCents: number;
-  tipCents: number;
-  reviewStatus: string;
-  photosAttached: number;
-}>;
 const clientProfilePhoto = '';
 const clientHairPhotos = [] as ClientPhoto[];
 const clientExamplePhotos = [] as ClientPhoto[];
@@ -700,6 +693,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
             name: service.name,
             duration: `${service.duration_minutes || 60} min`,
             price: formatServicePrice(service),
+            priceCents: service.base_price_cents,
             id: service.id,
             durationMinutes: service.duration_minutes || 60,
             paymentRequirement: paymentRequirementForService(service),
@@ -1051,6 +1045,8 @@ function App() {
   );
   const [professionalPickerOpen, setProfessionalPickerOpen] = useState(false);
   const [bookingError, setBookingError] = useState('');
+  const [bookingServicesLoading, setBookingServicesLoading] = useState(false);
+  const [bookingServicesError, setBookingServicesError] = useState('');
   const [locationPromptOpen, setLocationPromptOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
 
@@ -1412,6 +1408,60 @@ function App() {
     }
   }
 
+  async function refreshBookingProfileServices(
+    profile: Professional,
+    session = clientSession,
+  ) {
+    if (!session?.accessToken) return profile;
+    setBookingServicesLoading(true);
+    setBookingServicesError('');
+    const professionalId = normalizeClientProfessionalId(profile.id);
+    try {
+      const response = await fetch(
+        `/api/client-appointments?professionalId=${encodeURIComponent(professionalId)}`,
+        {
+          headers: { Authorization: `Bearer ${session.accessToken}` },
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(payload.error || 'We could not load services.');
+      const refreshed = payload.professional
+        ? professionalFromApi(payload.professional as Record<string, unknown>)
+        : profile;
+      console.info('[frizi-client-booking-services]', {
+        professionalId,
+        serviceCount: refreshed.services.length,
+        requestedAt: new Date().toISOString(),
+      });
+      setBookingProfile((current) =>
+        current && normalizeClientProfessionalId(current.id) === professionalId
+          ? refreshed
+          : current,
+      );
+      if (refreshed.services.length) {
+        const firstService = refreshed.services[0];
+        setSelectedService((current) => current || firstService.name);
+        setSelectedTime(
+          bookingSlotsForService(refreshed, firstService)[0] || '',
+        );
+      }
+      return refreshed;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'We could not load services.';
+      console.warn('[frizi-client-booking-services]', {
+        professionalId,
+        error: message,
+        requestedAt: new Date().toISOString(),
+      });
+      setBookingServicesError(message);
+      return profile;
+    } finally {
+      setBookingServicesLoading(false);
+    }
+  }
+
   async function submitBookingRequest(
     request: BookingRequest,
     session = clientSession,
@@ -1511,9 +1561,12 @@ function App() {
         : '',
     );
     setBookingError('');
+    setBookingServicesError('');
+    setBookingServicesLoading(Boolean(clientSession?.accessToken));
     setBooking(null);
     setActiveClientNav(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    void refreshBookingProfileServices(profile);
   }
 
   function openDiscovery() {
@@ -1549,6 +1602,12 @@ function App() {
     const selectedService =
       profile.services.find((service) => service.name === activeService) ||
       profile.services[0];
+    if (!selectedService) {
+      setBookingError(
+        "This professional doesn't have online-bookable services yet.",
+      );
+      return;
+    }
     const selectedDay = buildAvailabilityDays(
       bookingSlotsForService(profile, selectedService),
     ).find((day) => day.times.includes(activeTime));
@@ -1558,7 +1617,8 @@ function App() {
       service: selectedService.name,
       serviceId:
         selectedService.id || serviceIdFor(profile.id, selectedService.name),
-      servicePriceCents: parseMoneyToCents(selectedService.price),
+      servicePriceCents:
+        selectedService.priceCents ?? parseMoneyToCents(selectedService.price),
       date: selectedDay
         ? selectedDay.date.toLocaleDateString('en-CA', {
             weekday: 'long',
@@ -1606,7 +1666,7 @@ function App() {
               <span className="text-lg font-black text-[#f4c430]">Frizi</span>
             </button>
             <button
-              className="rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
               type="button"
               onClick={() =>
                 clientSession
@@ -1614,7 +1674,14 @@ function App() {
                   : openClientAuth('profile')
               }
             >
-              {clientSession ? clientSession.name.split(' ')[0] : 'Sign in/up'}
+              {clientSession ? (
+                <>
+                  <User size={16} />
+                  Profile
+                </>
+              ) : (
+                'Sign in/up'
+              )}
             </button>
           </div>
         </header>
@@ -1632,6 +1699,11 @@ function App() {
           selectedDay={activeSelectedDay}
           selectedService={activeService}
           selectedTime={activeTime}
+          servicesError={bookingServicesError}
+          servicesLoading={bookingServicesLoading}
+          onRetryServices={() =>
+            void refreshBookingProfileServices(bookingProfile)
+          }
           setSelectedService={(value) => {
             setSelectedService(value);
             const nextService =
@@ -3819,6 +3891,9 @@ function ProfileDetails({
         selectedDay={selectedDay}
         selectedService={selectedService}
         selectedTime={selectedTime}
+        servicesError=""
+        servicesLoading={false}
+        onRetryServices={() => undefined}
         setSelectedService={setSelectedService}
         setSelectedTime={setSelectedTime}
       />
@@ -3930,6 +4005,9 @@ function BookingCalendarPage({
   selectedDay,
   selectedService,
   selectedTime,
+  servicesError,
+  servicesLoading,
+  onRetryServices,
   setSelectedService,
   setSelectedTime,
 }: {
@@ -3943,6 +4021,9 @@ function BookingCalendarPage({
   selectedDay: ReturnType<typeof buildAvailabilityDays>[number] | undefined;
   selectedService: string;
   selectedTime: string;
+  servicesError: string;
+  servicesLoading: boolean;
+  onRetryServices: () => void;
   setSelectedService: (value: string) => void;
   setSelectedTime: (value: string) => void;
 }) {
@@ -3962,6 +4043,7 @@ function BookingCalendarPage({
     profile.services[0];
   const selectedPaymentRequirement =
     selectedServiceRecord?.paymentRequirement || 'pay_at_appointment';
+  const hasBookableServices = profile.services.length > 0;
   const paymentBlocksBooking =
     selectedPaymentRequirement === 'deposit_required' ||
     selectedPaymentRequirement === 'full_prepayment_required';
@@ -4028,34 +4110,46 @@ function BookingCalendarPage({
 
           {servicesOpen ? (
             <div className="space-y-2">
-              {profile.services.map((service) => (
-                <button
-                  key={service.id || service.name}
-                  className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
-                    selectedService === service.name
-                      ? 'border-[#f4c430] bg-[#f4c430]/12 ring-1 ring-[#f4c430]/45'
-                      : 'border-white/10 bg-white/[0.04]'
-                  }`}
-                  type="button"
-                  onClick={() => {
-                    setSelectedService(service.name);
-                    setSelectedTime(
-                      bookingSlotsForService(profile, service)[0] || '',
-                    );
-                    setServicesOpen(false);
-                  }}
-                >
-                  <span>
-                    <span className="block font-black">{service.name}</span>
-                    <span className="text-sm font-semibold text-white/52">
-                      {service.duration}
+              {servicesLoading ? (
+                <ServiceStateCard message="Loading services..." />
+              ) : servicesError ? (
+                <ServiceStateCard
+                  actionLabel="Try again"
+                  message="We couldn't load services."
+                  onAction={onRetryServices}
+                />
+              ) : hasBookableServices ? (
+                profile.services.map((service) => (
+                  <button
+                    key={service.id || service.name}
+                    className={`flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left ${
+                      selectedService === service.name
+                        ? 'border-[#f4c430] bg-[#f4c430]/12 ring-1 ring-[#f4c430]/45'
+                        : 'border-white/10 bg-white/[0.04]'
+                    }`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedService(service.name);
+                      setSelectedTime(
+                        bookingSlotsForService(profile, service)[0] || '',
+                      );
+                      setServicesOpen(false);
+                    }}
+                  >
+                    <span>
+                      <span className="block font-black">{service.name}</span>
+                      <span className="text-sm font-semibold text-white/52">
+                        {service.duration}
+                      </span>
                     </span>
-                  </span>
-                  <span className="text-lg font-black text-[#f4c430]">
-                    {service.price}
-                  </span>
-                </button>
-              ))}
+                    <span className="text-lg font-black text-[#f4c430]">
+                      {service.price}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <ServiceStateCard message="This professional doesn't have online-bookable services yet." />
+              )}
             </div>
           ) : null}
         </div>
@@ -4209,10 +4303,17 @@ function BookingCalendarPage({
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/38"
             type="button"
             onClick={onBook}
-            disabled={paymentBlocksBooking || !selectedTime}
+            disabled={
+              paymentBlocksBooking ||
+              !selectedTime ||
+              servicesLoading ||
+              !hasBookableServices
+            }
           >
             <CalendarDays size={20} />
-            Book an appointment
+            {selectedPaymentRequirement === 'pay_at_appointment'
+              ? 'Request appointment'
+              : 'Book an appointment'}
           </button>
           {bookingError ? (
             <p className="rounded-2xl bg-red-500/12 px-4 py-3 text-sm font-bold text-red-100">
@@ -4464,7 +4565,6 @@ function AppointmentsPanel({
   appointments,
   booking,
   connectedProfessionals,
-  isDemo,
   onBookAppointment,
 }: {
   appointments: BookingRequest[];
@@ -4473,6 +4573,8 @@ function AppointmentsPanel({
   isDemo: boolean;
   onBookAppointment: () => void;
 }) {
+  const [detailAppointment, setDetailAppointment] =
+    useState<BookingRequest | null>(null);
   const visibleAppointments = appointments.length
     ? appointments
     : booking
@@ -4488,175 +4590,241 @@ function AppointmentsPanel({
     ['declined', 'cancelled', 'completed'].includes(appointment.status),
   );
   const hasConnectedProfessionals = connectedProfessionals.length > 0;
+  const ctaLabel = hasConnectedProfessionals
+    ? 'Book an appointment'
+    : 'Find a professional';
 
   return (
     <div className="mt-5 space-y-4">
-      <section className="rounded-[28px] border border-[#f4c430]/28 bg-[#f4c430]/10 p-5">
+      <button
+        className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 text-base font-black text-black"
+        type="button"
+        onClick={onBookAppointment}
+      >
         {hasConnectedProfessionals ? (
-          <>
-            <p className="text-sm font-black text-[#f4c430]">
-              {connectedProfessionals.length === 1
-                ? `Connected with ${connectedProfessionals[0].name}`
-                : `${connectedProfessionals.length} connected professionals`}
-            </p>
-            <button
-              className="mt-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 text-base font-black text-black"
-              type="button"
-              onClick={onBookAppointment}
-            >
-              <CalendarDays size={20} />
-              Book an appointment
-            </button>
-          </>
+          <CalendarDays size={20} />
         ) : (
-          <>
-            <h2 className="text-2xl font-black">
-              No connected professionals yet.
-            </h2>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <button
-                className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 font-black text-black"
-                type="button"
-                onClick={onBookAppointment}
-              >
-                <Search size={20} />
-                Find a professional
-              </button>
-              <button
-                className="min-h-14 rounded-2xl border border-white/15 px-5 font-black text-white"
-                type="button"
-                onClick={onBookAppointment}
-              >
-                Search Frizi
-              </button>
-            </div>
-          </>
+          <Search size={20} />
+        )}
+        {ctaLabel}
+      </button>
+
+      <section className="rounded-[24px] border border-white/10 bg-[#151519] p-4">
+        <h2 className="text-xl font-black">Upcoming</h2>
+        {upcomingAppointments.length ? (
+          <div className="mt-3 space-y-3">
+            {upcomingAppointments.map((appointment) => (
+              <AppointmentEventCard
+                key={appointment.eventId}
+                booking={appointment}
+                onDetails={() => setDetailAppointment(appointment)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm font-semibold text-white/58">
+            No upcoming appointments.
+          </p>
         )}
       </section>
 
-      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-        <h2 className="text-2xl font-black">Upcoming</h2>
-        {upcomingAppointments.length ? (
-          <div className="mt-4 space-y-3">
-            {upcomingAppointments.map((appointment) => (
-              <BookingConfirmation
-                key={appointment.eventId}
-                booking={appointment}
-                clientSession={null}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="mt-4 rounded-2xl bg-white/[0.05] p-4">
-            <CalendarDays className="text-[#f4c430]" size={30} />
-            <h3 className="mt-4 text-xl font-black">
-              No upcoming appointments
-            </h3>
-            {hasConnectedProfessionals ? (
-              <button
-                className="mt-4 inline-flex min-h-12 items-center justify-center rounded-2xl bg-[#f4c430] px-5 font-black text-black"
-                type="button"
-                onClick={onBookAppointment}
-              >
-                Book an appointment
-              </button>
-            ) : (
-              <button
-                className="mt-4 inline-flex min-h-12 items-center justify-center rounded-2xl bg-[#f4c430] px-5 font-black text-black"
-                type="button"
-                onClick={onBookAppointment}
-              >
-                Find a professional
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-        <h2 className="text-2xl font-black">Pending</h2>
+      <section className="rounded-[24px] border border-white/10 bg-[#151519] p-4">
+        <h2 className="text-xl font-black">Pending</h2>
         {pendingAppointments.length ? (
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 space-y-3">
             {pendingAppointments.map((appointment) => (
-              <BookingConfirmation
+              <AppointmentEventCard
                 key={appointment.eventId}
                 booking={appointment}
-                clientSession={null}
+                onDetails={() => setDetailAppointment(appointment)}
               />
             ))}
           </div>
         ) : (
-          <p className="mt-3 leading-7 text-white/64">
-            No pending appointment requests.
+          <p className="mt-2 text-sm font-semibold text-white/58">
+            No pending requests.
           </p>
         )}
-      </div>
+      </section>
 
-      {isDemo ? (
-        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <h2 className="text-2xl font-black">Past</h2>
-          <div className="mt-4 space-y-3">
-            {completedAppointmentHistory.map((appointment) => {
-              const total =
-                appointment.servicePriceCents + appointment.tipCents;
-              return (
-                <article
-                  key={appointment.id}
-                  className="rounded-2xl bg-white/[0.05] p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-black text-white">
-                        {appointment.service}
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-white/58">
-                        {appointment.professional} - {appointment.date}
-                      </p>
-                    </div>
-                    <p className="text-lg font-black text-[#f4c430]">
-                      {formatCurrency(total)}
-                    </p>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                    <InfoTile
-                      label="Price"
-                      value={formatCurrency(appointment.servicePriceCents)}
-                    />
-                    <InfoTile
-                      label="Tip"
-                      value={formatCurrency(appointment.tipCents)}
-                    />
-                    <InfoTile label="Review" value={appointment.reviewStatus} />
-                    <InfoTile
-                      label="Photos"
-                      value={`${appointment.photosAttached} attached`}
-                    />
-                  </div>
-                </article>
-              );
-            })}
+      <section className="rounded-[24px] border border-white/10 bg-[#151519] p-4">
+        <h2 className="text-xl font-black">Past</h2>
+        {pastAppointments.length ? (
+          <div className="mt-3 space-y-3">
+            {pastAppointments.map((appointment) => (
+              <AppointmentEventCard
+                key={appointment.eventId}
+                booking={appointment}
+                onDetails={() => setDetailAppointment(appointment)}
+              />
+            ))}
           </div>
-        </div>
-      ) : (
-        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <h2 className="text-2xl font-black">Past</h2>
-          {pastAppointments.length ? (
-            <div className="mt-4 space-y-3">
-              {pastAppointments.map((appointment) => (
-                <BookingConfirmation
-                  key={appointment.eventId}
-                  booking={appointment}
-                  clientSession={null}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 leading-7 text-white/64">
-              No past appointments yet.
+        ) : (
+          <p className="mt-2 text-sm font-semibold text-white/58">
+            No past appointments yet.
+          </p>
+        )}
+      </section>
+
+      {detailAppointment ? (
+        <AppointmentDetailSheet
+          booking={detailAppointment}
+          onClose={() => setDetailAppointment(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function AppointmentEventCard({
+  booking,
+  onDetails,
+}: {
+  booking: BookingRequest;
+  onDetails: () => void;
+}) {
+  const status = appointmentStatusLabel(booking.status);
+  const isPending = booking.status === 'pending';
+  const isConfirmed = booking.status === 'confirmed';
+  const isCancelled =
+    booking.status === 'cancelled' || booking.status === 'declined';
+
+  return (
+    <article
+      className={`rounded-2xl border bg-white/[0.04] p-4 ${
+        isPending
+          ? 'border-l-4 border-l-[#f4c430]'
+          : isConfirmed
+            ? 'border-l-4 border-l-emerald-400/80'
+            : isCancelled
+              ? 'border-white/10 opacity-72'
+              : 'border-white/10'
+      }`}
+    >
+      <button className="w-full text-left" type="button" onClick={onDetails}>
+        <p className="text-sm font-black text-white/62">
+          {formatAppointmentDayShort(booking)}
+        </p>
+        <div className="mt-2 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-xl font-black">{booking.service}</h3>
+            <p className="mt-1 truncate text-sm font-semibold text-white/58">
+              {booking.professional}
+              {booking.scheduledEnd ? (
+                <> · {appointmentDurationLabel(booking)}</>
+              ) : null}
             </p>
-          )}
+          </div>
+          <span
+            className={`shrink-0 rounded-full border px-3 py-1 text-xs font-black ${
+              isPending
+                ? 'border-[#f4c430]/35 bg-[#f4c430]/10 text-[#f4c430]'
+                : isConfirmed
+                  ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                  : 'border-white/10 bg-white/[0.05] text-white/58'
+            }`}
+          >
+            {status.short}
+          </span>
         </div>
-      )}
+      </button>
+      <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-white/62">
+        <Clock3 className="text-[#f4c430]" size={16} />
+        {status.detail}
+      </p>
+      <div className="mt-4 flex gap-3">
+        <button
+          className="text-sm font-black text-[#f4c430]"
+          type="button"
+          onClick={onDetails}
+        >
+          View details
+        </button>
+        <button className="text-sm font-black text-white/72" type="button">
+          Message
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function AppointmentDetailSheet({
+  booking,
+  onClose,
+}: {
+  booking: BookingRequest;
+  onClose: () => void;
+}) {
+  const status = appointmentStatusLabel(booking.status);
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-end bg-black/58 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6"
+      onClick={onClose}
+    >
+      <section
+        aria-modal="true"
+        className="w-full rounded-[28px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60 sm:max-w-md"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-[#f4c430]">
+              Appointment details
+            </p>
+            <h2 className="mt-1 text-2xl font-black">{booking.service}</h2>
+          </div>
+          <button
+            aria-label="Close appointment details"
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/12 bg-white/[0.05]"
+            type="button"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm">
+          <ReceiptRow label="Professional" value={booking.professional} />
+          <ReceiptRow label="Date" value={formatAppointmentDateLong(booking)} />
+          <ReceiptRow
+            label="Time"
+            value={booking.time ? formatSlotTime(booking.time) : 'Set time'}
+          />
+          <ReceiptRow
+            label="Duration"
+            value={appointmentDurationLabel(booking)}
+          />
+          <ReceiptRow label="Status" value={status.detail} strong />
+        </div>
+
+        <div className="mt-4 grid gap-2">
+          <button
+            className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 font-black text-black"
+            type="button"
+          >
+            <MessageCircle size={18} />
+            Message
+          </button>
+          {booking.status === 'pending' ? (
+            <button
+              className="min-h-12 rounded-2xl border border-white/15 px-4 font-black text-white"
+              type="button"
+            >
+              Cancel request
+            </button>
+          ) : null}
+          {booking.status === 'cancelled' || booking.status === 'completed' ? (
+            <button
+              className="min-h-12 rounded-2xl border border-white/15 px-4 font-black text-white"
+              type="button"
+            >
+              Book again later
+            </button>
+          ) : null}
+        </div>
+      </section>
     </div>
   );
 }
@@ -5885,17 +6053,6 @@ function PhotoBoard({
   );
 }
 
-function InfoTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl bg-white/[0.06] px-2 py-3">
-      <p className="text-sm font-black text-white">{value}</p>
-      <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white/40">
-        {label}
-      </p>
-    </div>
-  );
-}
-
 function Panel({
   children,
   title,
@@ -5914,6 +6071,31 @@ function Panel({
   );
 }
 
+function ServiceStateCard({
+  actionLabel,
+  message,
+  onAction,
+}: {
+  actionLabel?: string;
+  message: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm font-semibold text-white/62">
+      {message}
+      {actionLabel && onAction ? (
+        <button
+          className="mt-3 block rounded-full border border-white/15 px-4 py-2 text-sm font-black text-[#f4c430]"
+          type="button"
+          onClick={onAction}
+        >
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function BookingConfirmation({
   booking,
 }: {
@@ -5921,8 +6103,8 @@ function BookingConfirmation({
   clientSession: ClientSession | null;
 }) {
   return (
-    <div className="mt-4 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 p-4">
-      <p className="flex items-center gap-2 font-black text-emerald-300">
+    <div className="mt-4 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-4">
+      <p className="flex items-center gap-2 font-black text-emerald-700">
         <CheckCircle2 size={19} />
         Appointment request sent
       </p>
@@ -5930,43 +6112,56 @@ function BookingConfirmation({
         Your request for {booking.service} with {booking.professional} has been
         sent.
       </p>
-      <div className="mt-4 grid gap-2 rounded-2xl border border-white/10 bg-[#101014] p-4 text-sm">
-        <ReceiptRow label="Service" value={booking.service} />
-        <ReceiptRow label="Professional" value={booking.professional} />
-        <ReceiptRow label="Date" value={booking.date} />
-        <ReceiptRow label="Time" value={formatSlotTime(booking.time)} />
-        <ReceiptRow
-          label="Status"
-          value={
-            booking.status === 'confirmed'
-              ? 'Confirmed'
-              : `Waiting for ${booking.professional} to confirm`
-          }
-          strong
-        />
-      </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        <button
-          className="rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black"
-          type="button"
-        >
-          View appointment
-        </button>
-        <button
-          className="rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
-          type="button"
-        >
-          Message {booking.professional.split(' ')[0]}
-        </button>
-        <a
-          className="rounded-2xl border border-white/15 px-4 py-3 text-center text-sm font-black text-white"
-          href="/"
-        >
-          Back to Frizi
-        </a>
-      </div>
     </div>
   );
+}
+
+function normalizeClientProfessionalId(value: string) {
+  return value.replace(/^live-/, '');
+}
+
+function appointmentStatusLabel(status: BookingRequest['status']) {
+  if (status === 'confirmed')
+    return { short: 'Confirmed', detail: 'Confirmed' };
+  if (status === 'cancelled')
+    return { short: 'Cancelled', detail: 'Cancelled' };
+  if (status === 'declined') return { short: 'Declined', detail: 'Declined' };
+  if (status === 'completed')
+    return { short: 'Completed', detail: 'Completed' };
+  return { short: 'Pending', detail: 'Waiting for confirmation' };
+}
+
+function appointmentStartDate(booking: BookingRequest) {
+  const source = booking.scheduledStart || booking.time;
+  const date = source ? new Date(source) : new Date(booking.date);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function formatAppointmentDayShort(booking: BookingRequest) {
+  const date = appointmentStartDate(booking);
+  return `${date.toLocaleDateString('en-CA', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })} · ${formatSlotTime(date.toISOString())}`;
+}
+
+function formatAppointmentDateLong(booking: BookingRequest) {
+  return appointmentStartDate(booking).toLocaleDateString('en-CA', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function appointmentDurationLabel(booking: BookingRequest) {
+  if (!booking.scheduledStart || !booking.scheduledEnd) return 'Set by service';
+  const start = new Date(booking.scheduledStart);
+  const end = new Date(booking.scheduledEnd);
+  const minutes = Math.round((end.getTime() - start.getTime()) / 60_000);
+  return Number.isFinite(minutes) && minutes > 0
+    ? `${minutes} min`
+    : 'Set by service';
 }
 
 function ReceiptRow({

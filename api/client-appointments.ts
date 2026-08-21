@@ -226,7 +226,10 @@ function appointmentStatusFor(paymentRequirement: string) {
 }
 
 function mapAppointment(row: Record<string, unknown>) {
-  const serviceSnapshot = (row.service_snapshot || {}) as Record<string, unknown>;
+  const serviceSnapshot = (row.service_snapshot || {}) as Record<
+    string,
+    unknown
+  >;
   const professional = Array.isArray(row.frizi_professionals)
     ? row.frizi_professionals[0]
     : row.frizi_professionals;
@@ -261,7 +264,12 @@ function formatServicePrice(service: ServiceRow) {
     : `$${dollars}`;
 }
 
-function appointmentBlocksSlot(row: AppointmentRow, slot: Date, startMinutes: number, endMinutes: number) {
+function appointmentBlocksSlot(
+  row: AppointmentRow,
+  slot: Date,
+  startMinutes: number,
+  endMinutes: number,
+) {
   const startsAt = new Date(String(row.starts_at || ''));
   const endsAt = new Date(String(row.ends_at || ''));
   if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()))
@@ -366,7 +374,9 @@ async function loadConnectedProfessionals(
   const professionalIds = Array.from(
     new Set(
       (relationships || [])
-        .map((relationship: RelationshipRow) => String(relationship.professional_id))
+        .map((relationship: RelationshipRow) =>
+          String(relationship.professional_id),
+        )
         .filter(Boolean),
     ),
   );
@@ -422,7 +432,9 @@ async function loadConnectedProfessionals(
       const professionalServices = ((services || []) as ServiceRow[]).filter(
         (service) => service.professional_id === professional.id,
       );
-      const professionalAppointments = ((appointments || []) as AppointmentRow[]).filter(
+      const professionalAppointments = (
+        (appointments || []) as AppointmentRow[]
+      ).filter(
         (appointment) => appointment.professional_id === professional.id,
       );
       const location = ((locations || []) as LocationRow[]).find(
@@ -534,6 +546,10 @@ export default async function handler(
   }
 
   if (request.method === 'GET') {
+    const requestUrl = new URL(request.url || '/', 'https://frizi.ca');
+    const requestedProfessionalId = normalizeProfessionalId(
+      requestUrl.searchParams.get('professionalId') || '',
+    );
     const { data: profile, error: profileError } = await supabase
       .from('frizi_profiles')
       .select('id')
@@ -555,6 +571,34 @@ export default async function handler(
         appointments: [],
         connectedProfessionals: [],
       });
+
+    if (requestedProfessionalId) {
+      if (!/^[0-9a-f-]{36}$/i.test(requestedProfessionalId)) {
+        return sendJson(response, 400, {
+          error: 'Choose a valid professional.',
+        });
+      }
+      const connectedProfessionals = await loadConnectedProfessionals(
+        supabase,
+        client.id,
+      );
+      const professional = connectedProfessionals.find(
+        (candidate) => candidate.id === requestedProfessionalId,
+      );
+      if (!professional) {
+        return sendJson(response, 404, {
+          error:
+            'This professional is not connected or is not available for booking.',
+        });
+      }
+      return sendJson(response, 200, {
+        professional,
+        diagnostics: {
+          professionalId: requestedProfessionalId,
+          serviceCount: professional.services.length,
+        },
+      });
+    }
 
     const [{ data, error }, connectedProfessionals] = await Promise.all([
       supabase
