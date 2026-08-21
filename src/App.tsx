@@ -1,4 +1,5 @@
 import {
+  Bell,
   CalendarDays,
   Camera,
   CheckCircle2,
@@ -10,6 +11,7 @@ import {
   MapPin,
   MessageCircle,
   Mic,
+  Lightbulb,
   QrCode,
   ReceiptText,
   Search,
@@ -198,8 +200,14 @@ const clientOAuthContextStorageKey = 'frizi-client-oauth-context';
 const pendingInviteStorageKey = 'frizi-client-pending-invite';
 const locationPromptStorageKey = 'frizi-client-location-prompt-complete';
 
-type ClientNavKey = 'appointments' | 'saved' | 'products' | 'profile';
-type AccountNavKey = Exclude<ClientNavKey, 'products'>;
+type ClientNavKey =
+  | 'appointments'
+  | 'my-pros'
+  | 'products'
+  | 'hair-tips'
+  | 'hair-profile'
+  | 'settings';
+type AccountNavKey = 'appointments' | 'my-pros' | 'hair-profile';
 type ClientAuthIntent =
   'default' | 'promo' | 'booking' | 'invite' | AccountNavKey;
 
@@ -234,7 +242,9 @@ type ClientPassport = {
 
 function isAccountNavIntent(intent: ClientAuthIntent): intent is AccountNavKey {
   return (
-    intent === 'appointments' || intent === 'saved' || intent === 'profile'
+    intent === 'appointments' ||
+    intent === 'my-pros' ||
+    intent === 'hair-profile'
   );
 }
 
@@ -1049,6 +1059,8 @@ function App() {
   const [bookingServicesError, setBookingServicesError] = useState('');
   const [locationPromptOpen, setLocationPromptOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem(clientSessionStorageKey);
@@ -1189,7 +1201,7 @@ function App() {
               clientSessionStorageKey,
               JSON.stringify(session),
             );
-            setActiveClientNav('profile');
+            setActiveClientNav('hair-profile');
             window.history.replaceState({}, '', '/');
             trackClientEvent('client_home_reached', {
               invitation_token: inviteToken,
@@ -1318,7 +1330,7 @@ function App() {
     } else if (isAccountNavIntent(authIntent)) {
       setActiveClientNav(authIntent);
     } else {
-      setActiveClientNav('profile');
+      setActiveClientNav('hair-profile');
     }
     setAuthIntent('default');
   }
@@ -1519,12 +1531,12 @@ function App() {
   }
 
   function handleClientNavChange(nav: ClientNavKey) {
-    if (nav === 'products') {
+    if (nav === 'products' || nav === 'hair-tips') {
       setActiveClientNav(nav);
       return;
     }
     if (!clientSession) {
-      openClientAuth(nav);
+      openClientAuth(nav === 'settings' ? 'hair-profile' : nav);
       return;
     }
     setActiveClientNav(nav);
@@ -1665,26 +1677,93 @@ function App() {
               />
               <span className="text-lg font-black text-[#f4c430]">Frizi</span>
             </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
-              type="button"
-              onClick={() =>
-                clientSession
-                  ? setActiveClientNav('profile')
-                  : openClientAuth('profile')
-              }
-            >
+            <div className="flex items-center gap-2">
               {clientSession ? (
                 <>
-                  <User size={16} />
-                  Profile
+                  <button
+                    aria-expanded={notificationCenterOpen}
+                    aria-label="Open notifications"
+                    className="relative grid h-11 w-11 place-items-center rounded-full border border-white/15 bg-white/[0.06] text-white"
+                    type="button"
+                    onClick={() => {
+                      setNotificationCenterOpen((open) => !open);
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <Bell size={18} />
+                  </button>
+                  <div className="relative">
+                    <button
+                      aria-expanded={profileMenuOpen}
+                      aria-label="Open client profile menu"
+                      className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border border-[#f4c430]/50 bg-white/[0.06] text-sm font-black text-[#f4c430]"
+                      type="button"
+                      onClick={() => {
+                        setProfileMenuOpen((open) => !open);
+                        setNotificationCenterOpen(false);
+                      }}
+                    >
+                      {clientSession.name?.slice(0, 1).toUpperCase() || (
+                        <User size={18} />
+                      )}
+                    </button>
+                    {profileMenuOpen ? (
+                      <div className="absolute right-0 top-13 z-[90] w-56 rounded-3xl border border-white/12 bg-[#151519] p-2 shadow-2xl shadow-black/40">
+                        <button
+                          className="w-full rounded-2xl px-4 py-3 text-left text-sm font-black text-white hover:bg-white/[0.06]"
+                          type="button"
+                          onClick={() => {
+                            setProfileMenuOpen(false);
+                            setActiveClientNav('hair-profile');
+                          }}
+                        >
+                          My Hair Profile
+                        </button>
+                        <button
+                          className="w-full rounded-2xl px-4 py-3 text-left text-sm font-black text-white hover:bg-white/[0.06]"
+                          type="button"
+                          onClick={() => {
+                            setProfileMenuOpen(false);
+                            setActiveClientNav('settings');
+                          }}
+                        >
+                          Settings
+                        </button>
+                        <button
+                          className="w-full rounded-2xl px-4 py-3 text-left text-sm font-black text-white hover:bg-white/[0.06]"
+                          type="button"
+                          onClick={() => {
+                            setProfileMenuOpen(false);
+                            signOutClient();
+                          }}
+                        >
+                          Log out
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </>
               ) : (
-                'Sign in/up'
+                <button
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-black text-white"
+                  type="button"
+                  onClick={() => openClientAuth('hair-profile')}
+                >
+                  Sign in/up
+                </button>
               )}
-            </button>
+            </div>
           </div>
         </header>
+      ) : null}
+      {notificationCenterOpen ? (
+        <ClientNotificationSheet
+          onClose={() => setNotificationCenterOpen(false)}
+          onOpenAppointments={() => {
+            setNotificationCenterOpen(false);
+            setActiveClientNav('appointments');
+          }}
+        />
       ) : null}
 
       {bookingProfile ? (
@@ -1782,7 +1861,7 @@ function App() {
                   onToggleSaved={() =>
                     clientSession
                       ? toggleSaved(activeProfile.id)
-                      : openClientAuth('saved')
+                      : openClientAuth('my-pros')
                   }
                   profile={activeProfile}
                   query={query}
@@ -4466,14 +4545,17 @@ function ClientFooter({
   onChange: (nav: ClientNavKey) => void;
 }) {
   const items: Array<{
-    key: ClientNavKey;
+    key: Extract<
+      ClientNavKey,
+      'appointments' | 'my-pros' | 'products' | 'hair-tips'
+    >;
     label: string;
     icon: typeof CalendarDays;
   }> = [
     { key: 'appointments', label: 'Appointments', icon: CalendarDays },
-    { key: 'saved', label: 'Saved', icon: Star },
+    { key: 'my-pros', label: 'My Pros', icon: Star },
     { key: 'products', label: 'Products', icon: ShoppingBag },
-    { key: 'profile', label: 'Profile', icon: User },
+    { key: 'hair-tips', label: 'Hair Tips', icon: Lightbulb },
   ];
 
   return (
@@ -4498,6 +4580,65 @@ function ClientFooter({
         })}
       </div>
     </nav>
+  );
+}
+
+function ClientNotificationSheet({
+  onClose,
+  onOpenAppointments,
+}: {
+  onClose: () => void;
+  onOpenAppointments: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[80] bg-black/45 px-4 pt-20"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="ml-auto w-full max-w-sm rounded-[28px] border border-white/10 bg-[#151519] p-4 text-white shadow-2xl shadow-black/45"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="client-notifications-title"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="client-notifications-title" className="text-xl font-black">
+              Notifications
+            </h2>
+            <p className="mt-1 text-sm font-semibold text-white/55">
+              Booking, message and promo alerts will appear here.
+            </p>
+          </div>
+          <button
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 text-white"
+            type="button"
+            aria-label="Close notifications"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4">
+          <Bell className="text-[#f4c430]" size={24} />
+          <p className="mt-3 font-black">No unread notifications</p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
+            Frizi will only show real appointment updates, messages and eligible
+            promo alerts here.
+          </p>
+          <button
+            className="mt-4 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
+            type="button"
+            onClick={onOpenAppointments}
+          >
+            View appointments
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -4528,9 +4669,11 @@ function ClientNavScreen({
 }) {
   const titleMap: Record<ClientNavKey, string> = {
     appointments: 'Appointments',
-    saved: 'Saved professionals',
+    'my-pros': 'My Pros',
     products: 'Products',
-    profile: 'My hair profile',
+    'hair-tips': 'Hair Tips',
+    'hair-profile': 'My Hair Profile',
+    settings: 'Settings',
   };
 
   return (
@@ -4545,14 +4688,26 @@ function ClientNavScreen({
           onBookAppointment={onBookAppointment}
         />
       ) : null}
-      {activeNav === 'saved' ? (
-        <SavedPanel profiles={savedProfiles} onBookSaved={onBookSaved} />
+      {activeNav === 'my-pros' ? (
+        <MyProsPanel
+          connectedProfiles={connectedProfessionals}
+          savedProfiles={savedProfiles}
+          onBookSaved={onBookSaved}
+        />
       ) : null}
       {activeNav === 'products' ? <ProductsPanel isDemo={isDemo} /> : null}
-      {activeNav === 'profile' ? (
+      {activeNav === 'hair-tips' ? <HairTipsPanel /> : null}
+      {activeNav === 'hair-profile' ? (
         <ClientPassportPanel
           clientSession={clientSession}
           isDemo={isDemo}
+          onDeleteAccount={onDeleteAccount}
+          onSignOut={onSignOut}
+        />
+      ) : null}
+      {activeNav === 'settings' ? (
+        <ClientSettingsPanel
+          clientSession={clientSession}
           onDeleteAccount={onDeleteAccount}
           onSignOut={onSignOut}
         />
@@ -4829,27 +4984,38 @@ function AppointmentDetailSheet({
   );
 }
 
-function SavedPanel({
-  profiles,
+function MyProsPanel({
+  connectedProfiles,
+  savedProfiles,
   onBookSaved,
 }: {
-  profiles: Professional[];
+  connectedProfiles: Professional[];
+  savedProfiles: Professional[];
   onBookSaved: (profileId: string) => void;
 }) {
+  const connectedIds = new Set(connectedProfiles.map((profile) => profile.id));
+  const profiles = [
+    ...connectedProfiles,
+    ...savedProfiles.filter((profile) => !connectedIds.has(profile.id)),
+  ];
+
   return (
     <div className="mt-5 grid gap-3">
       {profiles.length === 0 ? (
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <Star className="text-[#f4c430]" size={30} />
+          <User className="text-[#f4c430]" size={30} />
           <h2 className="mt-4 text-2xl font-black">
-            No saved professionals yet
+            No professionals yet
           </h2>
           <p className="mt-2 leading-7 text-white/68">
-            Tap the star on a profile hero to keep a stylist or barber here.
+            Connect with a professional through their QR code, or tap the star
+            on a profile hero to keep them here.
           </p>
         </div>
       ) : (
-        profiles.map((profile) => (
+        profiles.map((profile) => {
+          const connected = connectedIds.has(profile.id);
+          return (
           <button
             key={profile.id}
             className="flex items-center gap-4 rounded-[24px] border border-white/10 bg-[#151519] p-3 text-left"
@@ -4864,16 +5030,271 @@ function SavedPanel({
             <span className="min-w-0 flex-1">
               <span className="block text-xl font-black">{profile.name}</span>
               <span className="block text-sm font-semibold text-white/60">
-                {profile.role}
+                {profile.role} · {profile.neighborhood}
               </span>
               <span className="mt-1 block text-sm font-black text-[#f4c430]">
-                Book with stylist
+                {connected ? 'Connected · Book appointment' : 'Saved'}
               </span>
             </span>
           </button>
-        ))
+          );
+        })
       )}
     </div>
+  );
+}
+
+function HairTipsPanel() {
+  return (
+    <div className="mt-5 overflow-hidden rounded-[28px] border border-white/10 bg-[#151519] p-6">
+      <Lightbulb className="text-[#f4c430]" size={32} />
+      <p className="mt-4 text-sm font-black uppercase tracking-[0.18em] text-[#f4c430]">
+        Coming Soon
+      </p>
+      <h2 className="mt-2 text-3xl font-black">Hair Tips</h2>
+      <p className="mt-3 max-w-xl leading-7 text-white/68">
+        Get free hair tips from Frizi Pros. Ask questions, learn from hair
+        professionals, and discover advice for your hair type, style and
+        routine.
+      </p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        {[
+          'How do I stop my hair from breaking?',
+          'What products work for curly hair?',
+          'How often should I wash colour-treated hair?',
+          'How do I style thin hair?',
+        ].map((question) => (
+          <article
+            className="rounded-2xl border border-white/10 bg-white/[0.05] p-4 text-sm font-bold text-white/70"
+            key={question}
+          >
+            {question}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ClientSettingsPanel({
+  clientSession,
+  onDeleteAccount,
+  onSignOut,
+}: {
+  clientSession: ClientSession | null;
+  onDeleteAccount: () => void;
+  onSignOut: () => void;
+}) {
+  const [appointmentNotifications, setAppointmentNotifications] =
+    useState(true);
+  const [messageNotifications, setMessageNotifications] = useState(true);
+  const [promotionalNotifications, setPromotionalNotifications] =
+    useState(false);
+  const [radius, setRadius] = useState('15');
+  const [clientId, setClientId] = useState('');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreferences() {
+      if (!clientSession || !isSupabaseConfigured) return;
+      try {
+        const supabase = createClient();
+        const { data: userResult, error: userError } =
+          await supabase.auth.getUser();
+        if (userError || !userResult.user) return;
+        const { data: profile } = await supabase
+          .from('frizi_profiles')
+          .select('id')
+          .eq('auth_user_id', userResult.user.id)
+          .maybeSingle();
+        if (!profile?.id) return;
+        const { data: client, error } = await supabase
+          .from('frizi_clients')
+          .select('id, notification_preferences, search_preferences')
+          .eq('profile_id', profile.id)
+          .maybeSingle();
+        if (error) throw error;
+        if (!client || cancelled) return;
+        const notifications =
+          (client.notification_preferences || {}) as Record<string, unknown>;
+        const search =
+          (client.search_preferences || {}) as Record<string, unknown>;
+        setClientId(String(client.id));
+        setAppointmentNotifications(
+          notifications.appointment_notifications_enabled !== false,
+        );
+        setMessageNotifications(
+          notifications.message_notifications_enabled !== false,
+        );
+        setPromotionalNotifications(
+          notifications.promotional_notifications_enabled === true,
+        );
+        setRadius(String(search.search_radius_km || '15'));
+      } catch (error) {
+        if (!cancelled)
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : 'Could not load settings.',
+          );
+      }
+    }
+
+    void loadPreferences();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientSession]);
+
+  async function savePreference(
+    next: Partial<{
+      appointmentNotifications: boolean;
+      messageNotifications: boolean;
+      promotionalNotifications: boolean;
+      radius: string;
+    }>,
+  ) {
+    if (!clientId || !isSupabaseConfigured) return;
+    const nextAppointment =
+      next.appointmentNotifications ?? appointmentNotifications;
+    const nextMessages = next.messageNotifications ?? messageNotifications;
+    const nextPromos =
+      next.promotionalNotifications ?? promotionalNotifications;
+    const nextRadius = next.radius ?? radius;
+    setMessage('');
+    const supabase = createClient();
+    const { error } = await supabase
+      .from('frizi_clients')
+      .update({
+        notification_preferences: {
+          appointment_notifications_enabled: nextAppointment,
+          message_notifications_enabled: nextMessages,
+          promotional_notifications_enabled: nextPromos,
+        },
+        search_preferences: {
+          search_radius_km: Number(nextRadius) || 15,
+          location_mode: 'approximate',
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', clientId);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setMessage('Settings saved.');
+  }
+
+  return (
+    <div className="mt-5 space-y-4">
+      <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Notifications</h2>
+        <div className="mt-4 grid gap-3">
+          <PreferenceToggle
+            checked={appointmentNotifications}
+            label="Appointment notifications"
+            onChange={(checked) => {
+              setAppointmentNotifications(checked);
+              void savePreference({ appointmentNotifications: checked });
+            }}
+          />
+          <PreferenceToggle
+            checked={messageNotifications}
+            label="Messages"
+            onChange={(checked) => {
+              setMessageNotifications(checked);
+              void savePreference({ messageNotifications: checked });
+            }}
+          />
+          <PreferenceToggle
+            checked={promotionalNotifications}
+            label="Promotions and offers"
+            onChange={(checked) => {
+              setPromotionalNotifications(checked);
+              void savePreference({ promotionalNotifications: checked });
+            }}
+          />
+        </div>
+        <p className="mt-3 text-xs font-semibold leading-5 text-white/45">
+          Promotional opt-out is stored separately from booking and direct
+          message notifications.
+        </p>
+      </section>
+      <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Location & Search Preferences</h2>
+        <label className="mt-4 block">
+          <span className="text-sm font-black text-white/62">
+            Search radius
+          </span>
+          <select
+            className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-3 font-bold text-white"
+            value={radius}
+            onChange={(event) => {
+              setRadius(event.target.value);
+              void savePreference({ radius: event.target.value });
+            }}
+          >
+            <option value="5">5 km</option>
+            <option value="15">15 km</option>
+            <option value="30">30 km</option>
+            <option value="50">50 km</option>
+          </select>
+        </label>
+        <p className="mt-3 text-sm leading-6 text-white/58">
+          Frizi can use approximate location for local search. Exact location is
+          not required for discovery.
+        </p>
+      </section>
+      <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Account</h2>
+        <button
+          className="mt-4 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
+          type="button"
+          onClick={onSignOut}
+          disabled={!clientSession}
+        >
+          Log out
+        </button>
+        <button
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-300/35 px-4 py-3 text-sm font-black text-red-100"
+          type="button"
+          onClick={onDeleteAccount}
+          disabled={!clientSession}
+        >
+          <Trash2 size={16} />
+          Delete account
+        </button>
+      </section>
+      {message ? (
+        <p className="rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-4 py-3 text-sm font-bold text-[#f4c430]">
+          {message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PreferenceToggle({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex min-h-14 items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4">
+      <span className="font-black">{label}</span>
+      <input
+        className="h-5 w-5 accent-[#f4c430]"
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
   );
 }
 
@@ -5375,7 +5796,9 @@ function ProductionClientPassportPanel({
   onSignOut: () => void;
 }) {
   const [clientId, setClientId] = useState('');
-  const [profilePhoto, setProfilePhoto] = useState<ClientPhoto | null>(null);
+  const [currentHairPhoto, setCurrentHairPhoto] = useState<ClientPhoto | null>(
+    null,
+  );
   const [inspirationPhotos, setInspirationPhotos] = useState<ClientPhoto[]>([]);
   const [hairPhotos, setHairPhotos] = useState<ClientPhoto[]>([]);
   const [passport, setPassport] = useState<ClientPassport | null>(null);
@@ -5405,8 +5828,8 @@ function ProductionClientPassportPanel({
         const photos = await loadSignedClientPhotos(ensuredClientId);
         const nextPassport = await loadClientPassport();
         if (cancelled) return;
-        setProfilePhoto(
-          photos.find((photo) => photo.photoType === 'profile') || null,
+        setCurrentHairPhoto(
+          photos.find((photo) => photo.photoType === 'hair_history') || null,
         );
         setInspirationPhotos(
           photos.filter((photo) => photo.photoType === 'example_reference'),
@@ -5544,11 +5967,9 @@ function ProductionClientPassportPanel({
           imagePath: path,
           imageUrl: signedUrl?.signedUrl || '',
           label:
-            row.photo_type === 'profile'
-              ? 'Profile photo'
-              : row.photo_type === 'hair_history'
-                ? 'Completed haircut'
-                : 'Inspiration photo',
+            row.photo_type === 'hair_history'
+              ? 'Current hair photo'
+              : 'Inspiration photo',
           note: String(row.caption || ''),
           photoType: String(
             row.photo_type || 'example_reference',
@@ -5599,16 +6020,6 @@ function ProductionClientPassportPanel({
         });
       if (uploadError) throw uploadError;
 
-      if (photoType === 'profile' && profilePhoto?.imagePath) {
-        await supabase.storage
-          .from('frizi-client-media')
-          .remove([profilePhoto.imagePath]);
-        await supabase
-          .from('frizi_client_photos')
-          .delete()
-          .eq('id', profilePhoto.id);
-      }
-
       const { data: inserted, error: photoError } = await supabase
         .from('frizi_client_photos')
         .insert({
@@ -5629,16 +6040,6 @@ function ProductionClientPassportPanel({
         .single();
       if (photoError) throw photoError;
 
-      if (photoType === 'profile') {
-        await supabase
-          .from('frizi_clients')
-          .update({
-            profile_photo_url: path,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', ensuredClientId);
-      }
-
       const { data: signedUrl } = await supabase.storage
         .from('frizi-client-media')
         .createSignedUrl(path, 60 * 30);
@@ -5646,18 +6047,24 @@ function ProductionClientPassportPanel({
         id: String(inserted.id),
         imagePath: path,
         imageUrl: signedUrl?.signedUrl || '',
-        label: photoType === 'profile' ? 'Profile photo' : 'Inspiration photo',
+        label:
+          photoType === 'hair_history'
+            ? 'Current hair photo'
+            : 'Inspiration photo',
         note: String(inserted.caption || ''),
         photoType,
       };
-      if (photoType === 'profile') setProfilePhoto(nextPhoto);
+      if (photoType === 'hair_history') {
+        setCurrentHairPhoto(nextPhoto);
+        setHairPhotos((current) => [nextPhoto, ...current]);
+      }
       if (photoType === 'example_reference') {
         setInspirationPhotos((current) => [nextPhoto, ...current]);
         setCaptionDraft('');
       }
       setMediaMessage(
-        photoType === 'profile'
-          ? 'Profile photo updated.'
+        photoType === 'hair_history'
+          ? 'Hair photo uploaded.'
           : 'Inspiration photo uploaded.',
       );
     } catch (error) {
@@ -5683,16 +6090,15 @@ function ProductionClientPassportPanel({
         .delete()
         .eq('id', photo.id);
       if (error) throw error;
-      if (photo.photoType === 'profile') {
-        setProfilePhoto(null);
-        if (clientId)
-          await supabase
-            .from('frizi_clients')
-            .update({
-              profile_photo_url: null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', clientId);
+      if (photo.photoType === 'hair_history') {
+        setHairPhotos((current) =>
+          current.filter((item) => item.id !== photo.id),
+        );
+        if (currentHairPhoto?.id === photo.id) {
+          setCurrentHairPhoto(
+            hairPhotos.find((item) => item.id !== photo.id) || null,
+          );
+        }
       }
       if (photo.photoType === 'example_reference')
         setInspirationPhotos((current) =>
@@ -5712,11 +6118,11 @@ function ProductionClientPassportPanel({
     <div className="mt-5 space-y-4">
       <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
         <div className="flex items-center gap-4">
-          {profilePhoto ? (
+          {currentHairPhoto ? (
             <img
               className="h-20 w-20 rounded-3xl object-cover"
-              src={profilePhoto.imageUrl}
-              alt="Client profile"
+              src={currentHairPhoto.imageUrl}
+              alt="Current hair"
             />
           ) : (
             <div className="grid h-20 w-20 place-items-center rounded-3xl bg-white/[0.06]">
@@ -5724,16 +6130,16 @@ function ProductionClientPassportPanel({
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-black">Profile photo</h2>
+            <h2 className="text-2xl font-black">Current hair photos</h2>
             <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
-              This is your account image. It stays separate from inspiration and
-              completed haircut photos.
+              Add actual photos of your current hair or completed cuts. Frizi
+              can use the most recent suitable hair photo as your avatar.
             </p>
           </div>
         </div>
         <label className="mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black">
           <Camera size={18} />
-          {profilePhoto ? 'Replace profile photo' : 'Upload profile photo'}
+          Upload current hair photo
           <input
             className="sr-only"
             type="file"
@@ -5741,21 +6147,11 @@ function ProductionClientPassportPanel({
             disabled={mediaBusy || !clientSession}
             onChange={(event) => {
               const file = event.target.files?.[0];
-              if (file) void uploadClientPhoto(file, 'profile');
+              if (file) void uploadClientPhoto(file, 'hair_history');
               event.currentTarget.value = '';
             }}
           />
         </label>
-        {profilePhoto ? (
-          <button
-            className="mt-3 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
-            type="button"
-            disabled={mediaBusy}
-            onClick={() => void removeClientPhoto(profilePhoto)}
-          >
-            Remove profile photo
-          </button>
-        ) : null}
       </div>
 
       <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
@@ -5920,10 +6316,10 @@ function LegacyPreviewClientPassportPanel() {
             alt="Client profile"
           />
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-black">Profile photo</h2>
+            <h2 className="text-2xl font-black">Current hair photo</h2>
             <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
-              This is your account image. It is separate from haircut history
-              and example photos.
+              This is an actual hair photo. Inspiration photos stay separate
+              from your current/post-cut hair history.
             </p>
           </div>
         </div>
@@ -5933,7 +6329,7 @@ function LegacyPreviewClientPassportPanel() {
           onClick={() => setProfileUpdated((value) => !value)}
         >
           <Camera size={18} />
-          {profileUpdated ? 'Profile photo updated' : 'Update profile photo'}
+          {profileUpdated ? 'Hair photo updated' : 'Update hair photo'}
         </button>
       </div>
 
