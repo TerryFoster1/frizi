@@ -4854,9 +4854,6 @@ function ClientNavScreen({
   return (
     <section className="mx-auto min-h-screen max-w-4xl px-4 pb-28 pt-24 sm:px-6 lg:px-8">
       <h1 className="text-4xl font-black">{titleMap[activeNav]}</h1>
-      {clientSession ? (
-        <ClientPushPermissionPrompt />
-      ) : null}
       {activeNav === 'appointments' ? (
         <AppointmentsPanel
           appointments={appointments}
@@ -4890,6 +4887,9 @@ function ClientNavScreen({
           onDeleteAccount={onDeleteAccount}
           onSignOut={onSignOut}
         />
+      ) : null}
+      {clientSession ? (
+        <ClientPushPermissionPrompt />
       ) : null}
     </section>
   );
@@ -4934,20 +4934,20 @@ function ClientPushPermissionPrompt() {
   }
 
   return (
-    <article className="mt-4 flex flex-col gap-3 rounded-3xl border border-[#f4c430]/25 bg-[#f4c430]/10 p-4 sm:flex-row sm:items-center">
-      <Bell className="text-[#f4c430]" size={20} />
-      <div className="flex-1">
+    <article className="mt-4 box-border grid w-full max-w-full grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-3 rounded-[22px] border border-[#f4c430]/25 bg-white/[0.055] p-3 text-white shadow-[0_12px_32px_rgba(0,0,0,0.18)]">
+      <Bell className="mt-0.5 text-[#f4c430]" size={18} />
+      <div className="min-w-0">
         <strong className="block text-base font-black">Stay updated</strong>
-        <span className="mt-1 block text-sm font-semibold leading-6 text-white/62">
-          Turn on notifications for appointment confirmations, changes and messages from your Pros.
+        <span className="mt-1 block text-sm font-semibold leading-5 text-white/62">
+          Get notifications for appointment updates and messages from your Pros.
         </span>
         {message ? <em className="mt-1 block text-xs font-bold text-[#f4c430]">{message}</em> : null}
       </div>
-      <div className="flex gap-2">
-        <button className="rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black" type="button" disabled={enabling} onClick={() => void enable()}>
+      <div className="col-span-2 grid gap-2 sm:col-start-2 sm:col-end-3 sm:grid-cols-2">
+        <button className="min-h-11 rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black" type="button" disabled={enabling} onClick={() => void enable()}>
           {enabling ? 'Enabling...' : 'Enable notifications'}
         </button>
-        <button className="rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white" type="button" disabled={enabling} onClick={dismiss}>
+        <button className="min-h-11 rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-3 text-sm font-black text-white" type="button" disabled={enabling} onClick={dismiss}>
           Not now
         </button>
       </div>
