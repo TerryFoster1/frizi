@@ -233,6 +233,15 @@ function appointmentStatusFor(paymentRequirement: string) {
     : 'pending';
 }
 
+function formatNotificationDateTime(value: Date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(value);
+}
+
 async function createNotification(
   supabase: ReturnType<typeof createSupabaseServiceClient>,
   input: {
@@ -248,9 +257,17 @@ async function createNotification(
     actionPath?: string | null;
     sourceKey: string;
     metadata?: Record<string, unknown>;
+    required?: boolean;
   },
 ) {
-  if (!input.recipientUserId) return;
+  if (!input.recipientUserId) {
+    if (input.required) {
+      throw new Error(
+        'Notification recipient could not be resolved for this appointment event.',
+      );
+    }
+    return null;
+  }
   const { data, error } = await supabase.from('frizi_notifications').upsert(
     {
       recipient_user_id: input.recipientUserId,
@@ -271,6 +288,7 @@ async function createNotification(
   ).select('id').single();
   if (error) throw error;
   if (data?.id) await dispatchNotificationPush(supabase, String(data.id));
+  return data?.id ? String(data.id) : null;
 }
 
 async function profileAuthUserId(
@@ -752,14 +770,15 @@ export default async function handler(
       recipientUserId: proUserId,
       recipientRole: 'professional',
       notificationType: 'appointment_cancelled',
-      title: 'Appointment request cancelled',
-      body: `${String(userResult.user.user_metadata?.full_name || userResult.user.email || 'A client')} cancelled their appointment request.`,
+      title: 'Appointment cancelled',
+      body: `${String(userResult.user.user_metadata?.full_name || userResult.user.email || 'A client')} cancelled ${formatNotificationDateTime(new Date(String(updated.starts_at || '')))}.`,
       professionalId: String(updated.professional_id || ''),
       clientId: String(updated.client_id || ''),
       appointmentId,
       actionPath: `/calendar?appointment=${appointmentId}`,
-      sourceKey: `appointment:${appointmentId}:client_cancelled`,
+      sourceKey: `appointment_cancelled:${appointmentId}:client`,
       metadata: { status: 'cancelled' },
+      required: true,
     });
 
     return sendJson(response, 200, { appointment: mapAppointment(updated) });
@@ -981,7 +1000,7 @@ export default async function handler(
       throw appointmentError;
     }
 
-    const { error: relationshipError } = await supabase
+    const { data: relationship, error: relationshipError } = await supabase
       .from('frizi_client_professional_relationships')
       .upsert(
         {
@@ -995,7 +1014,9 @@ export default async function handler(
           updated_at: now,
         },
         { onConflict: 'client_id,professional_id' },
-      );
+      )
+      .select('id, source')
+      .single();
     if (relationshipError) throw relationshipError;
 
     const proUserId = await profileAuthUserId(supabase, professional.profile_id);
@@ -1004,18 +1025,19 @@ export default async function handler(
       recipientRole: 'professional',
       notificationType: 'appointment_requested',
       title: 'New booking request',
-      body: `${displayName} requested ${service.name}.`,
+      body: `${displayName} requested ${service.name} for ${formatNotificationDateTime(startsAt)}.`,
       professionalId: professional.id,
       clientId: client.id,
-      relationshipId: existingRelationship?.id || null,
+      relationshipId: relationship?.id || existingRelationship?.id || null,
       appointmentId: String(appointment.id || ''),
       actionPath: `/calendar?appointment=${appointment.id}`,
-      sourceKey: `appointment:${appointment.id}:requested`,
+      sourceKey: `appointment_requested:${appointment.id}`,
       metadata: {
         serviceName: service.name,
         startsAt: startsAt.toISOString(),
         clientName: displayName,
       },
+      required: true,
     });
 
     return sendJson(response, 201, {
