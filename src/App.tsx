@@ -39,6 +39,11 @@ import {
   useState,
 } from 'react';
 import { createClient, isSupabaseConfigured } from './utils/supabase/client';
+import {
+  enablePushNotifications,
+  notificationPermission,
+  pushSupported,
+} from './lib/pushNotifications';
 
 type Service = {
   id?: string;
@@ -4782,7 +4787,7 @@ function ClientNotificationSheet({
         ) : (
           <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4">
             <Bell className="text-[#f4c430]" size={24} />
-            <p className="mt-3 font-black">No unread notifications</p>
+            <p className="mt-3 font-black">No recent notifications.</p>
             <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
               Frizi will only show real appointment updates, messages and eligible
               promo alerts here.
@@ -4849,6 +4854,9 @@ function ClientNavScreen({
   return (
     <section className="mx-auto min-h-screen max-w-4xl px-4 pb-28 pt-24 sm:px-6 lg:px-8">
       <h1 className="text-4xl font-black">{titleMap[activeNav]}</h1>
+      {clientSession ? (
+        <ClientPushPermissionPrompt />
+      ) : null}
       {activeNav === 'appointments' ? (
         <AppointmentsPanel
           appointments={appointments}
@@ -4884,6 +4892,66 @@ function ClientNavScreen({
         />
       ) : null}
     </section>
+  );
+}
+
+function ClientPushPermissionPrompt() {
+  const storageKey = 'frizi-client-push-prompt-dismissed';
+  const [dismissed, setDismissed] = useState(
+    () => window.localStorage.getItem(storageKey) === '1',
+  );
+  const [message, setMessage] = useState('');
+  const [enabling, setEnabling] = useState(false);
+  if (
+    dismissed ||
+    !pushSupported() ||
+    notificationPermission() === 'granted' ||
+    notificationPermission() === 'denied'
+  )
+    return null;
+
+  async function enable() {
+    setEnabling(true);
+    setMessage('');
+    try {
+      await enablePushNotifications();
+      window.localStorage.setItem(storageKey, '1');
+      setDismissed(true);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : 'Notifications could not be enabled.',
+      );
+    } finally {
+      setEnabling(false);
+    }
+  }
+
+  function dismiss() {
+    window.localStorage.setItem(storageKey, '1');
+    setDismissed(true);
+  }
+
+  return (
+    <article className="mt-4 flex flex-col gap-3 rounded-3xl border border-[#f4c430]/25 bg-[#f4c430]/10 p-4 sm:flex-row sm:items-center">
+      <Bell className="text-[#f4c430]" size={20} />
+      <div className="flex-1">
+        <strong className="block text-base font-black">Stay updated</strong>
+        <span className="mt-1 block text-sm font-semibold leading-6 text-white/62">
+          Turn on notifications for appointment confirmations, changes and messages from your Pros.
+        </span>
+        {message ? <em className="mt-1 block text-xs font-bold text-[#f4c430]">{message}</em> : null}
+      </div>
+      <div className="flex gap-2">
+        <button className="rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black" type="button" disabled={enabling} onClick={() => void enable()}>
+          {enabling ? 'Enabling...' : 'Enable notifications'}
+        </button>
+        <button className="rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white" type="button" disabled={enabling} onClick={dismiss}>
+          Not now
+        </button>
+      </div>
+    </article>
   );
 }
 

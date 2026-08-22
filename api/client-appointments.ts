@@ -5,6 +5,7 @@ import {
   createSupabaseServiceClient,
   isSupabaseServiceConfigured,
 } from './_supabase.mjs';
+import { dispatchNotificationPush } from './_notifications.mjs';
 import { enforceRateLimit } from './_rate-limit.mjs';
 
 type AppointmentPayload = {
@@ -250,7 +251,7 @@ async function createNotification(
   },
 ) {
   if (!input.recipientUserId) return;
-  const { error } = await supabase.from('frizi_notifications').upsert(
+  const { data, error } = await supabase.from('frizi_notifications').upsert(
     {
       recipient_user_id: input.recipientUserId,
       recipient_role: input.recipientRole,
@@ -267,8 +268,9 @@ async function createNotification(
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'source_key' },
-  );
+  ).select('id').single();
   if (error) throw error;
+  if (data?.id) await dispatchNotificationPush(supabase, String(data.id));
 }
 
 async function profileAuthUserId(
@@ -1000,7 +1002,7 @@ export default async function handler(
     await createNotification(supabase, {
       recipientUserId: proUserId,
       recipientRole: 'professional',
-      notificationType: 'new_booking_request',
+      notificationType: 'appointment_requested',
       title: 'New booking request',
       body: `${displayName} requested ${service.name}.`,
       professionalId: professional.id,
