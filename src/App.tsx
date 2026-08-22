@@ -5090,6 +5090,8 @@ function ClientSettingsPanel({
   const [messageNotifications, setMessageNotifications] = useState(true);
   const [promotionalNotifications, setPromotionalNotifications] =
     useState(false);
+  const [promotionalNotificationState, setPromotionalNotificationState] =
+    useState<'unknown' | 'opted_in' | 'opted_out'>('unknown');
   const [radius, setRadius] = useState('15');
   const [clientId, setClientId] = useState('');
   const [message, setMessage] = useState('');
@@ -5128,8 +5130,18 @@ function ClientSettingsPanel({
         setMessageNotifications(
           notifications.message_notifications_enabled !== false,
         );
+        const promoState =
+          notifications.promotional_notifications_state === 'opted_in' ||
+          notifications.promotional_notifications_state === 'opted_out'
+            ? notifications.promotional_notifications_state
+            : 'unknown';
+        setPromotionalNotificationState(promoState);
         setPromotionalNotifications(
-          notifications.promotional_notifications_enabled === true,
+          promoState === 'opted_in'
+            ? true
+            : promoState === 'opted_out'
+              ? false
+              : notifications.promotional_notifications_enabled === true,
         );
         setRadius(String(search.search_radius_km || '15'));
       } catch (error) {
@@ -5162,17 +5174,30 @@ function ClientSettingsPanel({
     const nextMessages = next.messageNotifications ?? messageNotifications;
     const nextPromos =
       next.promotionalNotifications ?? promotionalNotifications;
+    const promoPreferenceChanged = Object.prototype.hasOwnProperty.call(
+      next,
+      'promotionalNotifications',
+    );
+    const nextPromoState = promoPreferenceChanged
+      ? nextPromos
+        ? 'opted_in'
+        : 'opted_out'
+      : promotionalNotificationState;
     const nextRadius = next.radius ?? radius;
+    const notificationPreferences: Record<string, unknown> = {
+      appointment_notifications_enabled: nextAppointment,
+      message_notifications_enabled: nextMessages,
+      promotional_notifications_enabled: nextPromos,
+    };
+    if (nextPromoState !== 'unknown') {
+      notificationPreferences.promotional_notifications_state = nextPromoState;
+    }
     setMessage('');
     const supabase = createClient();
     const { error } = await supabase
       .from('frizi_clients')
       .update({
-        notification_preferences: {
-          appointment_notifications_enabled: nextAppointment,
-          message_notifications_enabled: nextMessages,
-          promotional_notifications_enabled: nextPromos,
-        },
+        notification_preferences: notificationPreferences,
         search_preferences: {
           search_radius_km: Number(nextRadius) || 15,
           location_mode: 'approximate',
@@ -5184,6 +5209,7 @@ function ClientSettingsPanel({
       setMessage(error.message);
       return;
     }
+    setPromotionalNotificationState(nextPromoState);
     setMessage('Settings saved.');
   }
 
