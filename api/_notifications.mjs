@@ -64,6 +64,22 @@ export async function dispatchNotificationPush(supabase, notificationId) {
     .eq('active', true)
     .eq('provider', 'web_push');
   if (devicesError) throw devicesError;
+  if (!devices?.length) {
+    await supabase.from('frizi_notification_deliveries').upsert(
+      {
+        notification_id: notification.id,
+        channel: 'push',
+        status: 'skipped',
+        provider: 'web_push',
+        error_code: 'no_active_subscription',
+        attempted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        metadata: { reason: 'No active saved web push subscription for recipient.' },
+      },
+      { onConflict: 'notification_id,channel,device_subscription_id' },
+    );
+    return { attempted: 0, sent: 0, skipped: true };
+  }
 
   let sent = 0;
   for (const device of devices || []) {

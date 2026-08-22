@@ -41,8 +41,10 @@ import {
 import { createClient, isSupabaseConfigured } from './utils/supabase/client';
 import {
   enablePushNotifications,
+  getPushSubscriptionStatus,
   notificationPermission,
   pushSupported,
+  type PushSubscriptionStatus,
 } from './lib/pushNotifications';
 
 type Service = {
@@ -1647,6 +1649,32 @@ function App() {
     void loadClientNotifications();
   }
 
+  async function sendClientAppointmentMessage(
+    appointment: BookingRequest,
+    body: string,
+  ) {
+    if (!clientSession?.accessToken) {
+      openClientAuth('appointments');
+      return;
+    }
+    const response = await fetch('/api/client-messages', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${clientSession.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        appointmentId: appointment.id,
+        body,
+        professionalId: appointment.professionalId,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok)
+      throw new Error(payload.error || "We couldn't send that message.");
+    void loadClientNotifications();
+  }
+
   function openClientAuth(intent: ClientAuthIntent = 'default') {
     setAuthIntent(intent);
     setAuthModalOpen(true);
@@ -1941,6 +1969,7 @@ function App() {
           onBookAppointment={openAppointmentBooking}
           onBookProfessional={(profile) => startBooking(profile)}
           onCancelRequest={cancelAppointmentRequest}
+          onMessageAppointment={sendClientAppointmentMessage}
           onOpenProfessional={(profile) => {
             setSubmittedQuery(profile.name);
             setQuery(profile.name);
@@ -3584,7 +3613,7 @@ function SearchInputWithSuggestions({
       {suggestionsOpen ? (
         <div
           id={suggestionsId}
-          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(18rem,45vh)] overflow-auto rounded-[22px] border border-white/12 bg-[#151519]/98 p-2 shadow-2xl shadow-black/55 backdrop-blur-xl"
+          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(18rem,45vh)] overflow-auto rounded-[22px] border border-black/10 bg-white p-2 text-[#151519] shadow-2xl shadow-black/35"
           role="listbox"
         >
           {visibleSuggestions.length ? (
@@ -3595,7 +3624,7 @@ function SearchInputWithSuggestions({
                 className={`flex min-h-11 w-full items-center justify-between rounded-2xl px-3 text-left text-sm font-black ${
                   activeSuggestionIndex === index
                     ? 'bg-[#f4c430] text-black'
-                    : 'text-white hover:bg-white/8'
+                    : 'text-[#151519] hover:bg-[#f4c430]/12'
                 }`}
                 role="option"
                 type="button"
@@ -3604,11 +3633,11 @@ function SearchInputWithSuggestions({
                 onClick={() => chooseSuggestion(suggestion.query)}
               >
                 <span>{suggestion.label}</span>
-                <Search size={15} />
+                <Search className="text-[#8f6a00]" size={15} />
               </button>
             ))
           ) : (
-            <p className="px-3 py-3 text-sm font-semibold text-white/58">
+            <p className="px-3 py-3 text-sm font-semibold text-[#55565c]">
               Press Enter to search your exact phrase.
             </p>
           )}
@@ -4821,6 +4850,7 @@ function ClientNavScreen({
   onBookAppointment,
   onBookProfessional,
   onCancelRequest,
+  onMessageAppointment,
   onDeleteAccount,
   onOpenProfessional,
   onSignOut,
@@ -4836,6 +4866,10 @@ function ClientNavScreen({
   onBookAppointment: () => void;
   onBookProfessional: (profile: Professional) => void;
   onCancelRequest: (appointmentId: string) => Promise<void>;
+  onMessageAppointment: (
+    appointment: BookingRequest,
+    body: string,
+  ) => Promise<void>;
   onDeleteAccount: () => void;
   onOpenProfessional: (profile: Professional) => void;
   onSignOut: () => void;
@@ -4861,6 +4895,7 @@ function ClientNavScreen({
           connectedProfessionals={connectedProfessionals}
           isDemo={isDemo}
           onCancelRequest={onCancelRequest}
+          onMessageAppointment={onMessageAppointment}
           onBookAppointment={onBookAppointment}
         />
       ) : null}
@@ -4900,13 +4935,39 @@ function ClientPushPermissionPrompt() {
   const [dismissed, setDismissed] = useState(
     () => window.localStorage.getItem(storageKey) === '1',
   );
+  const [pushStatus, setPushStatus] = useState<PushSubscriptionStatus | null>(
+    null,
+  );
   const [message, setMessage] = useState('');
   const [enabling, setEnabling] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!pushSupported()) return;
+    void getPushSubscriptionStatus()
+      .then((status) => {
+        if (!cancelled) setPushStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled)
+          setPushStatus({
+            browserSubscribed: false,
+            enabled: false,
+            permission: notificationPermission(),
+            savedSubscriptionCount: 0,
+            supported: pushSupported(),
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   if (
     dismissed ||
     !pushSupported() ||
-    notificationPermission() === 'granted' ||
-    notificationPermission() === 'denied'
+    notificationPermission() === 'denied' ||
+    pushStatus?.enabled
   )
     return null;
 
@@ -4914,7 +4975,8 @@ function ClientPushPermissionPrompt() {
     setEnabling(true);
     setMessage('');
     try {
-      await enablePushNotifications();
+      const status = await enablePushNotifications();
+      setPushStatus(status);
       window.localStorage.setItem(storageKey, '1');
       setDismissed(true);
     } catch (error) {
@@ -4961,6 +5023,7 @@ function AppointmentsPanel({
   connectedProfessionals,
   onCancelRequest,
   onBookAppointment,
+  onMessageAppointment,
 }: {
   appointments: BookingRequest[];
   booking: BookingRequest | null;
@@ -4968,8 +5031,14 @@ function AppointmentsPanel({
   isDemo: boolean;
   onCancelRequest: (appointmentId: string) => Promise<void>;
   onBookAppointment: () => void;
+  onMessageAppointment: (
+    appointment: BookingRequest,
+    body: string,
+  ) => Promise<void>;
 }) {
   const [detailAppointment, setDetailAppointment] =
+    useState<BookingRequest | null>(null);
+  const [messageAppointment, setMessageAppointment] =
     useState<BookingRequest | null>(null);
   const visibleAppointments = appointments.length
     ? appointments
@@ -5021,6 +5090,7 @@ function AppointmentsPanel({
                 key={appointment.eventId}
                 booking={appointment}
                 onDetails={() => setDetailAppointment(appointment)}
+                onMessage={() => setMessageAppointment(appointment)}
               />
             ))}
           </div>
@@ -5040,6 +5110,7 @@ function AppointmentsPanel({
                 key={appointment.eventId}
                 booking={appointment}
                 onDetails={() => setDetailAppointment(appointment)}
+                onMessage={() => setMessageAppointment(appointment)}
               />
             ))}
           </div>
@@ -5059,6 +5130,7 @@ function AppointmentsPanel({
                 key={appointment.eventId}
                 booking={appointment}
                 onDetails={() => setDetailAppointment(appointment)}
+                onMessage={() => setMessageAppointment(appointment)}
               />
             ))}
           </div>
@@ -5077,6 +5149,14 @@ function AppointmentsPanel({
           onCancelled={(updated) => {
             setDetailAppointment(updated);
           }}
+          onMessage={() => setMessageAppointment(detailAppointment)}
+        />
+      ) : null}
+      {messageAppointment ? (
+        <ClientAppointmentMessageSheet
+          booking={messageAppointment}
+          onClose={() => setMessageAppointment(null)}
+          onSend={onMessageAppointment}
         />
       ) : null}
     </div>
@@ -5086,9 +5166,11 @@ function AppointmentsPanel({
 function AppointmentEventCard({
   booking,
   onDetails,
+  onMessage,
 }: {
   booking: BookingRequest;
   onDetails: () => void;
+  onMessage: () => void;
 }) {
   const status = appointmentStatusLabel(booking.status);
   const isPending = booking.status === 'pending';
@@ -5147,7 +5229,11 @@ function AppointmentEventCard({
         >
           View details
         </button>
-        <button className="text-sm font-black text-white/72" type="button">
+        <button
+          className="text-sm font-black text-white/72"
+          type="button"
+          onClick={onMessage}
+        >
           Message
         </button>
       </div>
@@ -5160,29 +5246,38 @@ function AppointmentDetailSheet({
   onClose,
   onCancelRequest,
   onCancelled,
+  onMessage,
 }: {
   booking: BookingRequest;
   onClose: () => void;
   onCancelRequest: (appointmentId: string) => Promise<void>;
   onCancelled: (booking: BookingRequest) => void;
+  onMessage: () => void;
 }) {
   const status = appointmentStatusLabel(booking.status);
   const [busy, setBusy] = useState(false);
+  const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
   const [error, setError] = useState('');
+  const canCancel =
+    booking.status === 'pending' ||
+    booking.status === 'requested' ||
+    booking.status === 'confirmed';
+  const cancelLabel =
+    booking.status === 'confirmed' ? 'Cancel appointment' : 'Cancel request';
 
   async function cancelRequest() {
     if (!booking.id) return;
-    if (!window.confirm('Cancel this appointment request?')) return;
     setBusy(true);
     setError('');
     try {
       await onCancelRequest(booking.id);
       onCancelled({ ...booking, status: 'cancelled' });
+      setConfirmCancelOpen(false);
     } catch (cancelError) {
       setError(
         cancelError instanceof Error
           ? cancelError.message
-          : "We couldn't cancel this request.",
+          : "We couldn't cancel this appointment.",
       );
     } finally {
       setBusy(false);
@@ -5235,18 +5330,19 @@ function AppointmentDetailSheet({
           <button
             className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 font-black text-black"
             type="button"
+            onClick={onMessage}
           >
             <MessageCircle size={18} />
             Message
           </button>
-          {booking.status === 'pending' || booking.status === 'requested' ? (
+          {canCancel ? (
             <button
               className="min-h-12 rounded-2xl border border-white/15 px-4 font-black text-white"
               type="button"
               disabled={busy}
-              onClick={() => void cancelRequest()}
+              onClick={() => setConfirmCancelOpen(true)}
             >
-              {busy ? 'Cancelling...' : 'Cancel request'}
+              {busy ? 'Cancelling...' : cancelLabel}
             </button>
           ) : null}
           {booking.status === 'cancelled' || booking.status === 'completed' ? (
@@ -5263,6 +5359,132 @@ function AppointmentDetailSheet({
             {error}
           </p>
         ) : null}
+        {confirmCancelOpen ? (
+          <div className="mt-4 rounded-2xl border border-red-300/30 bg-red-500/10 p-4">
+            <h3 className="text-lg font-black">Cancel this appointment?</h3>
+            <p className="mt-1 text-sm font-semibold text-white/70">
+              The appointment will move to cancelled and your professional will
+              be notified.
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <button
+                className="min-h-11 rounded-2xl border border-white/15 px-4 font-black text-white"
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmCancelOpen(false)}
+              >
+                Keep appointment
+              </button>
+              <button
+                className="min-h-11 rounded-2xl bg-red-200 px-4 font-black text-red-950"
+                type="button"
+                disabled={busy}
+                onClick={() => void cancelRequest()}
+              >
+                {busy ? 'Cancelling...' : 'Cancel appointment'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function ClientAppointmentMessageSheet({
+  booking,
+  onClose,
+  onSend,
+}: {
+  booking: BookingRequest;
+  onClose: () => void;
+  onSend: (appointment: BookingRequest, body: string) => Promise<void>;
+}) {
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [sent, setSent] = useState(false);
+
+  async function send() {
+    setBusy(true);
+    setError('');
+    try {
+      await onSend(booking, body);
+      setSent(true);
+      setBody('');
+    } catch (sendError) {
+      setError(
+        sendError instanceof Error
+          ? sendError.message
+          : "We couldn't send that message.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-end bg-black/58 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6"
+      onClick={onClose}
+    >
+      <section
+        aria-modal="true"
+        className="w-full rounded-[28px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60 sm:max-w-md"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-[#f4c430]">Message</p>
+            <h2 className="mt-1 text-2xl font-black">
+              {booking.professional}
+            </h2>
+            <p className="mt-1 text-sm font-semibold text-white/58">
+              {booking.service} · {formatAppointmentDateLong(booking)}
+            </p>
+          </div>
+          <button
+            aria-label="Close message composer"
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/12 bg-white/[0.05]"
+            type="button"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <label className="mt-4 block">
+          <span className="text-sm font-black text-white/62">Message</span>
+          <textarea
+            className="mt-2 min-h-32 w-full rounded-2xl border border-white/10 bg-black/30 p-3 text-base font-semibold text-white outline-none placeholder:text-white/35"
+            maxLength={1000}
+            placeholder="Can I come 10 minutes early?"
+            value={body}
+            onChange={(event) => {
+              setBody(event.target.value);
+              setSent(false);
+            }}
+          />
+        </label>
+        {sent ? (
+          <p className="mt-3 rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm font-bold text-emerald-100">
+            Message sent.
+          </p>
+        ) : null}
+        {error ? (
+          <p className="mt-3 rounded-2xl border border-red-300/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100">
+            {error}
+          </p>
+        ) : null}
+        <button
+          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 font-black text-black disabled:opacity-55"
+          type="button"
+          disabled={busy || body.trim().length < 1}
+          onClick={() => void send()}
+        >
+          <MessageCircle size={18} />
+          {busy ? 'Sending...' : 'Send message'}
+        </button>
       </section>
     </div>
   );
@@ -5422,6 +5644,10 @@ function ClientSettingsPanel({
     useState(false);
   const [promotionalNotificationState, setPromotionalNotificationState] =
     useState<'unknown' | 'opted_in' | 'opted_out'>('unknown');
+  const [pushStatus, setPushStatus] = useState<PushSubscriptionStatus | null>(
+    null,
+  );
+  const [pushBusy, setPushBusy] = useState(false);
   const [radius, setRadius] = useState('15');
   const [clientId, setClientId] = useState('');
   const [message, setMessage] = useState('');
@@ -5474,6 +5700,8 @@ function ClientSettingsPanel({
               : notifications.promotional_notifications_enabled === true,
         );
         setRadius(String(search.search_radius_km || '15'));
+        const status = await getPushSubscriptionStatus();
+        if (!cancelled) setPushStatus(status);
       } catch (error) {
         if (!cancelled)
           setMessage(
@@ -5543,11 +5771,74 @@ function ClientSettingsPanel({
     setMessage('Settings saved.');
   }
 
+  async function enablePushFromSettings() {
+    setPushBusy(true);
+    setMessage('');
+    try {
+      const status = await enablePushNotifications();
+      setPushStatus(status);
+      setMessage(
+        status.enabled
+          ? 'Push notifications are enabled on this device.'
+          : 'Push notifications are not fully enabled yet.',
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : 'Notifications could not be enabled.',
+      );
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  const pushSupportedLabel = pushStatus?.supported ?? pushSupported();
+  const pushPermission = pushStatus?.permission ?? notificationPermission();
+  const pushEnabled = Boolean(pushStatus?.enabled);
+
   return (
     <div className="mt-5 space-y-4">
       <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
         <h2 className="text-2xl font-black">Notifications</h2>
         <div className="mt-4 grid gap-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <strong className="block text-base font-black">
+                  Push notifications
+                </strong>
+                <span className="mt-1 block text-sm font-semibold text-white/58">
+                  {pushEnabled
+                    ? 'Enabled on this device'
+                    : pushPermission === 'denied'
+                      ? 'Blocked in this browser'
+                      : pushSupportedLabel
+                        ? 'Not enabled on this device'
+                        : 'Not available in this browser'}
+                </span>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${
+                  pushEnabled
+                    ? 'bg-emerald-400 text-black'
+                    : 'bg-[#f4c430] text-black'
+                }`}
+              >
+                {pushEnabled ? 'Enabled' : 'Not enabled'}
+              </span>
+            </div>
+            {!pushEnabled && pushSupportedLabel && pushPermission !== 'denied' ? (
+              <button
+                className="mt-3 min-h-11 w-full rounded-2xl bg-[#f4c430] px-4 text-sm font-black text-black"
+                type="button"
+                disabled={pushBusy}
+                onClick={() => void enablePushFromSettings()}
+              >
+                {pushBusy ? 'Enabling...' : 'Enable push notifications'}
+              </button>
+            ) : null}
+          </div>
           <PreferenceToggle
             checked={appointmentNotifications}
             label="Appointment notifications"

@@ -741,8 +741,8 @@ export default async function handler(
       .maybeSingle();
     if (appointmentLookupError) throw appointmentLookupError;
     if (!appointment) return sendJson(response, 404, { error: 'Appointment request was not found.' });
-    if (!['pending', 'requested'].includes(String(appointment.status || ''))) {
-      return sendJson(response, 409, { error: 'Only pending requests can be cancelled.' });
+    if (!['pending', 'requested', 'confirmed'].includes(String(appointment.status || ''))) {
+      return sendJson(response, 409, { error: 'This appointment cannot be cancelled from the app.' });
     }
 
     const now = new Date().toISOString();
@@ -751,7 +751,7 @@ export default async function handler(
       .update({ status: 'cancelled', updated_at: now })
       .eq('id', appointmentId)
       .eq('client_id', client.id)
-      .in('status', ['pending', 'requested'])
+      .in('status', ['pending', 'requested', 'confirmed'])
       .select(
         'id, professional_id, client_id, service_id, starts_at, ends_at, status, payment_requirement, payment_status, service_snapshot, frizi_professionals(display_name, profile_id)',
       )

@@ -11,6 +11,14 @@ export function notificationPermission() {
   return Notification.permission;
 }
 
+export type PushSubscriptionStatus = {
+  browserSubscribed: boolean;
+  enabled: boolean;
+  permission: NotificationPermission | 'unsupported';
+  savedSubscriptionCount: number;
+  supported: boolean;
+};
+
 function urlBase64ToUint8Array(value: string) {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);
   const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -24,8 +32,11 @@ export async function enablePushNotifications() {
   if (!pushSupported()) throw new Error('Push notifications are not configured for this browser yet.');
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error(permission === 'denied' ? 'Notifications are blocked in this browser.' : 'Notification permission was not granted.');
-  const registration = await navigator.serviceWorker.register('/frizi-sw.js');
-  const subscription = await registration.pushManager.subscribe({
+  await navigator.serviceWorker.register('/frizi-sw.js');
+  const readyRegistration = await navigator.serviceWorker.ready;
+  const currentSubscription = await readyRegistration.pushManager.getSubscription();
+  if (currentSubscription) await currentSubscription.unsubscribe();
+  const subscription = await readyRegistration.pushManager.subscribe({
     applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
     userVisibleOnly: true,
   });
@@ -47,4 +58,45 @@ export async function enablePushNotifications() {
     { onConflict: 'user_id,device_token' },
   );
   if (error) throw error;
+  return getPushSubscriptionStatus();
+}
+
+export async function getPushSubscriptionStatus(): Promise<PushSubscriptionStatus> {
+  const supported = pushSupported();
+  const permission = notificationPermission();
+  let browserSubscribed = false;
+  let savedSubscriptionCount = 0;
+
+  const supabase = createClient();
+  const { data } = await supabase.auth.getSession();
+  const userId = data.session?.user.id;
+
+  if (supported) {
+    try {
+      await navigator.serviceWorker.register('/frizi-sw.js');
+      const readyRegistration = await navigator.serviceWorker.ready;
+      browserSubscribed = Boolean(await readyRegistration.pushManager.getSubscription());
+    } catch {
+      browserSubscribed = false;
+    }
+  }
+
+  if (userId) {
+    const { count, error } = await supabase
+      .from('frizi_device_subscriptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('provider', 'web_push')
+      .eq('active', true);
+    if (error) throw error;
+    savedSubscriptionCount = count || 0;
+  }
+
+  return {
+    browserSubscribed,
+    enabled: supported && permission === 'granted' && browserSubscribed && savedSubscriptionCount > 0,
+    permission,
+    savedSubscriptionCount,
+    supported,
+  };
 }
