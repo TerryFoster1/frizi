@@ -66,6 +66,7 @@ export async function getPushSubscriptionStatus(): Promise<PushSubscriptionStatu
   const permission = notificationPermission();
   let browserSubscribed = false;
   let savedSubscriptionCount = 0;
+  let browserEndpoint = '';
 
   const supabase = createClient();
   const { data } = await supabase.auth.getSession();
@@ -75,19 +76,23 @@ export async function getPushSubscriptionStatus(): Promise<PushSubscriptionStatu
     try {
       await navigator.serviceWorker.register('/frizi-sw.js');
       const readyRegistration = await navigator.serviceWorker.ready;
-      browserSubscribed = Boolean(await readyRegistration.pushManager.getSubscription());
+      const browserSubscription = await readyRegistration.pushManager.getSubscription();
+      browserSubscribed = Boolean(browserSubscription);
+      browserEndpoint = browserSubscription?.endpoint || '';
     } catch {
       browserSubscribed = false;
+      browserEndpoint = '';
     }
   }
 
-  if (userId) {
+  if (userId && browserEndpoint) {
     const { count, error } = await supabase
       .from('frizi_device_subscriptions')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
       .eq('provider', 'web_push')
-      .eq('active', true);
+      .eq('active', true)
+      .eq('device_token', browserEndpoint);
     if (error) throw error;
     savedSubscriptionCount = count || 0;
   }
