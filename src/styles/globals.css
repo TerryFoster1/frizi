@@ -105,6 +105,14 @@ img {
   stroke: currentColor;
 }
 
+.clientApp .friziGoldBadge {
+  display: inline-grid;
+  place-items: center;
+  background: var(--frizi-gold) !important;
+  color: var(--frizi-on-gold) !important;
+  font-weight: 900;
+}
+
 .clientApp .clientMediaSurface,
 .clientApp .clientMediaSurface [class*="bg-[#080808]"],
 .clientApp .clientMediaSurface [class*="bg-black"],

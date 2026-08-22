@@ -1846,8 +1846,8 @@ function App() {
                   >
                     <Bell size={18} />
                     {unreadClientNotificationCount ? (
-                      <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-[#f4c430] px-1 text-center text-[10px] font-black leading-4 text-black">
-                        {unreadClientNotificationCount}
+                      <span className="friziGoldBadge absolute right-1.5 top-1.5 min-w-4 rounded-full px-1 text-center text-[10px] leading-4">
+                        {formatUnreadBadgeCount(unreadClientNotificationCount)}
                       </span>
                     ) : null}
                   </button>
@@ -7196,6 +7196,10 @@ function formatNotificationDate(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function formatUnreadBadgeCount(count: number) {
+  return count > 99 ? '99+' : String(count);
 }
 
 function formatAppointmentDayShort(booking: BookingRequest) {

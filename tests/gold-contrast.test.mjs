@@ -40,3 +40,9 @@ test('Frizi Client notification enable buttons use canonical gold button class',
   assert.equal(settingsButton, true)
   assert.doesNotMatch(app, /Enable push notifications[\s\S]{0,220}text-white/)
 })
+
+test('Frizi Client notification badge uses canonical dark-on-gold badge class', () => {
+  assert.match(css, /\.clientApp \.friziGoldBadge\s*{[\s\S]*color:\s*var\(--frizi-on-gold\)\s*!important;/)
+  assert.match(app, /className="friziGoldBadge[^"]*"/)
+  assert.doesNotMatch(app, /friziGoldBadge[^"]*text-white/)
+})
