@@ -8,6 +8,8 @@ import {
 import { enforceRateLimit } from './_rate-limit.mjs';
 
 type AppointmentPayload = {
+  action?: 'cancel';
+  appointmentId?: string;
   professionalId?: string;
   serviceId?: string;
   scheduledStart?: string;
@@ -37,6 +39,7 @@ type ServiceRow = {
 
 type ProfessionalRow = {
   id: string;
+  profile_id?: string | null;
   display_name: string;
   studio_name?: string | null;
   bio?: string | null;
@@ -65,6 +68,10 @@ type LocationRow = {
 
 type RelationshipRow = {
   professional_id: string;
+};
+
+type ProfileIdentityRow = {
+  auth_user_id: string | null;
 };
 
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
@@ -223,6 +230,59 @@ function appointmentStatusFor(paymentRequirement: string) {
     paymentRequirement === 'frizi_payment_optional'
     ? 'pending'
     : 'pending';
+}
+
+async function createNotification(
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  input: {
+    recipientUserId?: string | null;
+    recipientRole: 'client' | 'professional';
+    notificationType: string;
+    title: string;
+    body?: string | null;
+    professionalId?: string | null;
+    clientId?: string | null;
+    relationshipId?: string | null;
+    appointmentId?: string | null;
+    actionPath?: string | null;
+    sourceKey: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  if (!input.recipientUserId) return;
+  const { error } = await supabase.from('frizi_notifications').upsert(
+    {
+      recipient_user_id: input.recipientUserId,
+      recipient_role: input.recipientRole,
+      notification_type: input.notificationType,
+      title: input.title,
+      body: input.body || null,
+      professional_id: input.professionalId || null,
+      client_id: input.clientId || null,
+      relationship_id: input.relationshipId || null,
+      appointment_id: input.appointmentId || null,
+      action_path: input.actionPath || null,
+      source_key: input.sourceKey,
+      metadata: input.metadata || {},
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'source_key' },
+  );
+  if (error) throw error;
+}
+
+async function profileAuthUserId(
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  profileId?: string | null,
+) {
+  if (!profileId) return null;
+  const { data, error } = await supabase
+    .from('frizi_profiles')
+    .select('auth_user_id')
+    .eq('id', profileId)
+    .maybeSingle();
+  if (error) throw error;
+  return ((data || null) as ProfileIdentityRow | null)?.auth_user_id || null;
 }
 
 function mapAppointment(row: Record<string, unknown>) {
@@ -513,7 +573,7 @@ export default async function handler(
   request: IncomingMessage & { body?: unknown },
   response: ServerResponse,
 ) {
-  if (!['GET', 'POST'].includes(request.method || '')) {
+  if (!['GET', 'POST', 'PATCH'].includes(request.method || '')) {
     return sendJson(response, 405, { error: 'Method not allowed' });
   }
 
@@ -572,6 +632,14 @@ export default async function handler(
         connectedProfessionals: [],
       });
 
+    const nowIso = new Date().toISOString();
+    await supabase
+      .from('frizi_appointments')
+      .update({ status: 'expired', updated_at: nowIso })
+      .eq('client_id', client.id)
+      .in('status', ['pending', 'requested'])
+      .lt('ends_at', nowIso);
+
     if (requestedProfessionalId) {
       if (!/^[0-9a-f-]{36}$/i.test(requestedProfessionalId)) {
         return sendJson(response, 400, {
@@ -618,6 +686,83 @@ export default async function handler(
     });
   }
 
+  if (request.method === 'PATCH') {
+    const payload = await readJson(request);
+    const appointmentId = String(payload.appointmentId || '').trim();
+    if (payload.action !== 'cancel' || !/^[0-9a-f-]{36}$/i.test(appointmentId)) {
+      return sendJson(response, 400, {
+        error: 'Choose a valid appointment request to cancel.',
+      });
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from('frizi_profiles')
+      .select('id')
+      .eq('auth_user_id', userResult.user.id)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile) return sendJson(response, 404, { error: 'Client profile was not found.' });
+
+    const { data: client, error: clientError } = await supabase
+      .from('frizi_clients')
+      .select('id')
+      .eq('profile_id', profile.id)
+      .maybeSingle();
+    if (clientError) throw clientError;
+    if (!client) return sendJson(response, 404, { error: 'Client profile was not found.' });
+
+    const { data: appointment, error: appointmentLookupError } = await supabase
+      .from('frizi_appointments')
+      .select(
+        'id, professional_id, client_id, service_id, starts_at, ends_at, status, payment_requirement, payment_status, service_snapshot, frizi_professionals(display_name, profile_id)',
+      )
+      .eq('id', appointmentId)
+      .eq('client_id', client.id)
+      .maybeSingle();
+    if (appointmentLookupError) throw appointmentLookupError;
+    if (!appointment) return sendJson(response, 404, { error: 'Appointment request was not found.' });
+    if (!['pending', 'requested'].includes(String(appointment.status || ''))) {
+      return sendJson(response, 409, { error: 'Only pending requests can be cancelled.' });
+    }
+
+    const now = new Date().toISOString();
+    const { data: updated, error: updateError } = await supabase
+      .from('frizi_appointments')
+      .update({ status: 'cancelled', updated_at: now })
+      .eq('id', appointmentId)
+      .eq('client_id', client.id)
+      .in('status', ['pending', 'requested'])
+      .select(
+        'id, professional_id, client_id, service_id, starts_at, ends_at, status, payment_requirement, payment_status, service_snapshot, frizi_professionals(display_name, profile_id)',
+      )
+      .single();
+    if (updateError) throw updateError;
+
+    const professionalRaw = Array.isArray(updated.frizi_professionals)
+      ? updated.frizi_professionals[0]
+      : updated.frizi_professionals;
+    const professionalProfileId =
+      professionalRaw && typeof professionalRaw === 'object'
+        ? String((professionalRaw as Record<string, unknown>).profile_id || '')
+        : '';
+    const proUserId = await profileAuthUserId(supabase, professionalProfileId);
+    await createNotification(supabase, {
+      recipientUserId: proUserId,
+      recipientRole: 'professional',
+      notificationType: 'appointment_cancelled',
+      title: 'Appointment request cancelled',
+      body: `${String(userResult.user.user_metadata?.full_name || userResult.user.email || 'A client')} cancelled their appointment request.`,
+      professionalId: String(updated.professional_id || ''),
+      clientId: String(updated.client_id || ''),
+      appointmentId,
+      actionPath: `/calendar?appointment=${appointmentId}`,
+      sourceKey: `appointment:${appointmentId}:client_cancelled`,
+      metadata: { status: 'cancelled' },
+    });
+
+    return sendJson(response, 200, { appointment: mapAppointment(updated) });
+  }
+
   try {
     const payload = await readJson(request);
     const professionalId = normalizeProfessionalId(
@@ -639,7 +784,7 @@ export default async function handler(
       await supabase
         .from('frizi_professionals')
         .select(
-          'id, display_name, public_profile_status, bookable, subscription_status, booking_settings',
+          'id, profile_id, display_name, public_profile_status, bookable, subscription_status, booking_settings',
         )
         .eq('id', professionalId)
         .maybeSingle();
@@ -850,6 +995,26 @@ export default async function handler(
         { onConflict: 'client_id,professional_id' },
       );
     if (relationshipError) throw relationshipError;
+
+    const proUserId = await profileAuthUserId(supabase, professional.profile_id);
+    await createNotification(supabase, {
+      recipientUserId: proUserId,
+      recipientRole: 'professional',
+      notificationType: 'new_booking_request',
+      title: 'New booking request',
+      body: `${displayName} requested ${service.name}.`,
+      professionalId: professional.id,
+      clientId: client.id,
+      relationshipId: existingRelationship?.id || null,
+      appointmentId: String(appointment.id || ''),
+      actionPath: `/calendar?appointment=${appointment.id}`,
+      sourceKey: `appointment:${appointment.id}:requested`,
+      metadata: {
+        serviceName: service.name,
+        startsAt: startsAt.toISOString(),
+        clientName: displayName,
+      },
+    });
 
     return sendJson(response, 201, {
       appointment: {

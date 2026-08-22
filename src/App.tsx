@@ -94,7 +94,14 @@ type BookingRequest = {
   date: string;
   time: string;
   eventId: string;
-  status: 'pending' | 'confirmed' | 'declined' | 'cancelled' | 'completed';
+  status:
+    | 'pending'
+    | 'requested'
+    | 'confirmed'
+    | 'declined'
+    | 'cancelled'
+    | 'completed'
+    | 'expired';
   scheduledStart?: string;
   scheduledEnd?: string;
   paymentRequirement?: string;
@@ -231,6 +238,20 @@ type ClientPhoto = {
   label: string;
   note: string;
   photoType: 'profile' | 'hair_history' | 'example_reference';
+};
+
+type ClientNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  professionalId: string;
+  appointmentId: string;
+  messageId: string;
+  promotionId: string;
+  actionPath: string;
+  readAt: string | null;
+  createdAt: string;
 };
 
 type ClientPassport = {
@@ -1061,6 +1082,9 @@ function App() {
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [clientNotifications, setClientNotifications] = useState<
+    ClientNotification[]
+  >([]);
 
   useEffect(() => {
     const savedSession = window.localStorage.getItem(clientSessionStorageKey);
@@ -1109,6 +1133,7 @@ function App() {
           }
         } else {
           void loadClientAppointments(session);
+          void loadClientNotifications();
           if (authContext?.intent === 'promo') {
             setOpenBookingAfterAuth(true);
           } else if (authContext?.intent === 'invite') {
@@ -1175,6 +1200,9 @@ function App() {
   const activeSelectedDay =
     activeAvailabilityDays.find((day) => day.times.includes(activeTime)) ||
     activeAvailabilityDays[0];
+  const unreadClientNotificationCount = clientNotifications.filter(
+    (notification) => !notification.readAt,
+  ).length;
 
   if (infoPageMatch) {
     const pageKey = `${infoPageMatch[1]}/${infoPageMatch[2]}`;
@@ -1342,6 +1370,7 @@ function App() {
     window.sessionStorage.removeItem(clientOAuthContextStorageKey);
     setClientSession(null);
     setClientAppointments([]);
+    setClientNotifications([]);
     setBooking(null);
     setOpenBookingAfterAuth(false);
     setAuthIntent('default');
@@ -1408,8 +1437,9 @@ function App() {
       setConnectedProfessionals(professionals);
       const nextAppointment = appointments.find(
         (appointment) =>
-          appointment.status === 'pending' ||
-          appointment.status === 'confirmed',
+          !isAppointmentPast(appointment) &&
+          (appointment.status === 'pending' ||
+            appointment.status === 'confirmed'),
       );
       if (nextAppointment) setBooking(nextAppointment);
     } catch (error) {
@@ -1418,6 +1448,66 @@ function App() {
         error instanceof Error ? error.message : error,
       );
     }
+  }
+
+  async function loadClientNotifications() {
+    if (!isSupabaseConfigured) return;
+    try {
+      const { data, error } = await createClient()
+        .from('frizi_notifications')
+        .select(
+          'id, notification_type, title, body, professional_id, appointment_id, message_id, promotion_id, action_path, read_at, created_at',
+        )
+        .eq('recipient_role', 'client')
+        .order('created_at', { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      setClientNotifications(
+        (data || []).map((row: Record<string, unknown>) => ({
+          id: String(row.id),
+          type: String(row.notification_type || ''),
+          title: String(row.title || 'Notification'),
+          body: String(row.body || ''),
+          professionalId: String(row.professional_id || ''),
+          appointmentId: String(row.appointment_id || ''),
+          messageId: String(row.message_id || ''),
+          promotionId: String(row.promotion_id || ''),
+          actionPath: String(row.action_path || ''),
+          readAt: row.read_at ? String(row.read_at) : null,
+          createdAt: String(row.created_at || ''),
+        })),
+      );
+    } catch (error) {
+      console.warn(
+        '[frizi-client-notifications]',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  async function openClientNotification(notification: ClientNotification) {
+    if (!notification.readAt) {
+      const readAt = new Date().toISOString();
+      setClientNotifications((current) =>
+        current.map((item) =>
+          item.id === notification.id ? { ...item, readAt } : item,
+        ),
+      );
+      const { error } = await createClient()
+        .from('frizi_notifications')
+        .update({ read_at: readAt, updated_at: readAt })
+        .eq('id', notification.id);
+      if (error) {
+        console.warn('[frizi-client-notifications] read state', error.message);
+      }
+    }
+    setNotificationCenterOpen(false);
+    if (/message|promo/i.test(notification.type)) {
+      setActiveClientNav('my-pros');
+      return;
+    }
+    setActiveClientNav('appointments');
+    void loadClientAppointments();
   }
 
   async function refreshBookingProfileServices(
@@ -1515,6 +1605,7 @@ function App() {
       setBookingProfile(null);
       setProfessionalPickerOpen(false);
       setActiveClientNav('appointments');
+      void loadClientNotifications();
     } catch (error) {
       setBookingError(
         error instanceof Error
@@ -1523,6 +1614,32 @@ function App() {
       );
       setActiveClientNav(null);
     }
+  }
+
+  async function cancelAppointmentRequest(appointmentId: string) {
+    if (!clientSession?.accessToken) {
+      openClientAuth('appointments');
+      return;
+    }
+    const response = await fetch('/api/client-appointments', {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${clientSession.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'cancel', appointmentId }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok)
+      throw new Error(payload.error || "We couldn't cancel this request.");
+    const updated = bookingFromApiAppointment(payload.appointment);
+    setClientAppointments((current) =>
+      current.map((appointment) =>
+        appointment.id === updated.id ? updated : appointment,
+      ),
+    );
+    if (booking?.id === updated.id) setBooking(updated);
+    void loadClientNotifications();
   }
 
   function openClientAuth(intent: ClientAuthIntent = 'default') {
@@ -1682,7 +1799,11 @@ function App() {
                 <>
                   <button
                     aria-expanded={notificationCenterOpen}
-                    aria-label="Open notifications"
+                    aria-label={
+                      unreadClientNotificationCount
+                        ? `${unreadClientNotificationCount} notifications`
+                        : 'Open notifications'
+                    }
                     className="relative grid h-11 w-11 place-items-center rounded-full border border-white/15 bg-white/[0.06] text-white"
                     type="button"
                     onClick={() => {
@@ -1691,6 +1812,11 @@ function App() {
                     }}
                   >
                     <Bell size={18} />
+                    {unreadClientNotificationCount ? (
+                      <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-[#f4c430] px-1 text-center text-[10px] font-black leading-4 text-black">
+                        {unreadClientNotificationCount}
+                      </span>
+                    ) : null}
                   </button>
                   <div className="relative">
                     <button
@@ -1763,6 +1889,8 @@ function App() {
             setNotificationCenterOpen(false);
             setActiveClientNav('appointments');
           }}
+          notifications={clientNotifications}
+          onOpenNotification={openClientNotification}
         />
       ) : null}
 
@@ -1806,27 +1934,21 @@ function App() {
           clientSession={clientSession}
           isDemo={false}
           onBookAppointment={openAppointmentBooking}
-          onBookSaved={(profileId) => {
+          onBookProfessional={(profile) => startBooking(profile)}
+          onCancelRequest={cancelAppointmentRequest}
+          onOpenProfessional={(profile) => {
+            setSubmittedQuery(profile.name);
+            setQuery(profile.name);
             const index = allProfessionals.findIndex(
-              (profile) => profile.id === profileId,
+              (candidate) => candidate.id === profile.id,
             );
-            if (index >= 0) {
-              const profile = allProfessionals[index];
-              setSubmittedQuery(profile.name);
-              setQuery(profile.name);
-              setActiveIndex(0);
-              setActiveClientNav(null);
-              window.setTimeout(
-                () =>
-                  document
-                    .getElementById('booking')
-                    ?.scrollIntoView({ behavior: 'smooth' }),
-                50,
-              );
-            }
+            if (index >= 0) setActiveIndex(index);
+            setActiveClientNav(null);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           onDeleteAccount={() => setDeleteAccountOpen(true)}
           onSignOut={signOutClient}
+          notifications={clientNotifications}
           savedProfiles={allProfessionals.filter((profile) =>
             savedIds.includes(profile.id),
           )}
@@ -4584,12 +4706,17 @@ function ClientFooter({
 }
 
 function ClientNotificationSheet({
+  notifications,
   onClose,
   onOpenAppointments,
+  onOpenNotification,
 }: {
+  notifications: ClientNotification[];
   onClose: () => void;
   onOpenAppointments: () => void;
+  onOpenNotification: (notification: ClientNotification) => void;
 }) {
+  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
   return (
     <div
       className="fixed inset-0 z-[80] bg-black/45 px-4 pt-20"
@@ -4622,21 +4749,58 @@ function ClientNotificationSheet({
             <X size={18} />
           </button>
         </div>
-        <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4">
-          <Bell className="text-[#f4c430]" size={24} />
-          <p className="mt-3 font-black">No unread notifications</p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
-            Frizi will only show real appointment updates, messages and eligible
-            promo alerts here.
+        {notifications.length ? (
+          <div className="mt-4 space-y-2">
+            {notifications.map((notification) => (
+              <button
+                className={`w-full rounded-3xl border p-4 text-left ${
+                  notification.readAt
+                    ? 'border-white/10 bg-black/18 text-white/66'
+                    : 'border-[#f4c430]/35 bg-[#f4c430]/10 text-white'
+                }`}
+                key={notification.id}
+                type="button"
+                onClick={() => void onOpenNotification(notification)}
+              >
+                <span className="flex items-start justify-between gap-3">
+                  <strong>{notification.title}</strong>
+                  {!notification.readAt ? (
+                    <i className="mt-1 h-2.5 w-2.5 rounded-full bg-[#f4c430]" />
+                  ) : null}
+                </span>
+                {notification.body ? (
+                  <span className="mt-1 block text-sm font-semibold leading-6 text-white/66">
+                    {notification.body}
+                  </span>
+                ) : null}
+                <span className="mt-2 block text-xs font-black text-[#f4c430]">
+                  {formatNotificationDate(notification.createdAt)}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4">
+            <Bell className="text-[#f4c430]" size={24} />
+            <p className="mt-3 font-black">No unread notifications</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
+              Frizi will only show real appointment updates, messages and eligible
+              promo alerts here.
+            </p>
+            <button
+              className="mt-4 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
+              type="button"
+              onClick={onOpenAppointments}
+            >
+              View appointments
+            </button>
+          </div>
+        )}
+        {unreadCount ? (
+          <p className="mt-3 text-center text-xs font-semibold text-white/45">
+            {unreadCount} unread
           </p>
-          <button
-            className="mt-4 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
-            type="button"
-            onClick={onOpenAppointments}
-          >
-            View appointments
-          </button>
-        </div>
+        ) : null}
       </section>
     </div>
   );
@@ -4650,9 +4814,12 @@ function ClientNavScreen({
   clientSession,
   isDemo,
   onBookAppointment,
-  onBookSaved,
+  onBookProfessional,
+  onCancelRequest,
   onDeleteAccount,
+  onOpenProfessional,
   onSignOut,
+  notifications,
   savedProfiles,
 }: {
   activeNav: ClientNavKey;
@@ -4662,9 +4829,12 @@ function ClientNavScreen({
   clientSession: ClientSession | null;
   isDemo: boolean;
   onBookAppointment: () => void;
-  onBookSaved: (profileId: string) => void;
+  onBookProfessional: (profile: Professional) => void;
+  onCancelRequest: (appointmentId: string) => Promise<void>;
   onDeleteAccount: () => void;
+  onOpenProfessional: (profile: Professional) => void;
   onSignOut: () => void;
+  notifications: ClientNotification[];
   savedProfiles: Professional[];
 }) {
   const titleMap: Record<ClientNavKey, string> = {
@@ -4685,6 +4855,7 @@ function ClientNavScreen({
           booking={booking}
           connectedProfessionals={connectedProfessionals}
           isDemo={isDemo}
+          onCancelRequest={onCancelRequest}
           onBookAppointment={onBookAppointment}
         />
       ) : null}
@@ -4692,7 +4863,9 @@ function ClientNavScreen({
         <MyProsPanel
           connectedProfiles={connectedProfessionals}
           savedProfiles={savedProfiles}
-          onBookSaved={onBookSaved}
+          notifications={notifications}
+          onBookProfessional={onBookProfessional}
+          onOpenProfessional={onOpenProfessional}
         />
       ) : null}
       {activeNav === 'products' ? <ProductsPanel isDemo={isDemo} /> : null}
@@ -4701,8 +4874,6 @@ function ClientNavScreen({
         <ClientPassportPanel
           clientSession={clientSession}
           isDemo={isDemo}
-          onDeleteAccount={onDeleteAccount}
-          onSignOut={onSignOut}
         />
       ) : null}
       {activeNav === 'settings' ? (
@@ -4720,12 +4891,14 @@ function AppointmentsPanel({
   appointments,
   booking,
   connectedProfessionals,
+  onCancelRequest,
   onBookAppointment,
 }: {
   appointments: BookingRequest[];
   booking: BookingRequest | null;
   connectedProfessionals: Professional[];
   isDemo: boolean;
+  onCancelRequest: (appointmentId: string) => Promise<void>;
   onBookAppointment: () => void;
 }) {
   const [detailAppointment, setDetailAppointment] =
@@ -4736,13 +4909,20 @@ function AppointmentsPanel({
       ? [booking]
       : [];
   const upcomingAppointments = visibleAppointments.filter(
-    (appointment) => appointment.status === 'confirmed',
+    (appointment) =>
+      !isAppointmentPast(appointment) && appointment.status === 'confirmed',
   );
   const pendingAppointments = visibleAppointments.filter(
-    (appointment) => appointment.status === 'pending',
+    (appointment) =>
+      !isAppointmentPast(appointment) &&
+      (appointment.status === 'pending' || appointment.status === 'requested'),
   );
-  const pastAppointments = visibleAppointments.filter((appointment) =>
-    ['declined', 'cancelled', 'completed'].includes(appointment.status),
+  const pastAppointments = visibleAppointments.filter(
+    (appointment) =>
+      isAppointmentPast(appointment) ||
+      ['declined', 'cancelled', 'completed', 'expired'].includes(
+        appointment.status,
+      ),
   );
   const hasConnectedProfessionals = connectedProfessionals.length > 0;
   const ctaLabel = hasConnectedProfessionals
@@ -4825,6 +5005,10 @@ function AppointmentsPanel({
         <AppointmentDetailSheet
           booking={detailAppointment}
           onClose={() => setDetailAppointment(null)}
+          onCancelRequest={onCancelRequest}
+          onCancelled={(updated) => {
+            setDetailAppointment(updated);
+          }}
         />
       ) : null}
     </div>
@@ -4906,11 +5090,36 @@ function AppointmentEventCard({
 function AppointmentDetailSheet({
   booking,
   onClose,
+  onCancelRequest,
+  onCancelled,
 }: {
   booking: BookingRequest;
   onClose: () => void;
+  onCancelRequest: (appointmentId: string) => Promise<void>;
+  onCancelled: (booking: BookingRequest) => void;
 }) {
   const status = appointmentStatusLabel(booking.status);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function cancelRequest() {
+    if (!booking.id) return;
+    if (!window.confirm('Cancel this appointment request?')) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onCancelRequest(booking.id);
+      onCancelled({ ...booking, status: 'cancelled' });
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error
+          ? cancelError.message
+          : "We couldn't cancel this request.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div
@@ -4962,12 +5171,14 @@ function AppointmentDetailSheet({
             <MessageCircle size={18} />
             Message
           </button>
-          {booking.status === 'pending' ? (
+          {booking.status === 'pending' || booking.status === 'requested' ? (
             <button
               className="min-h-12 rounded-2xl border border-white/15 px-4 font-black text-white"
               type="button"
+              disabled={busy}
+              onClick={() => void cancelRequest()}
             >
-              Cancel request
+              {busy ? 'Cancelling...' : 'Cancel request'}
             </button>
           ) : null}
           {booking.status === 'cancelled' || booking.status === 'completed' ? (
@@ -4979,6 +5190,11 @@ function AppointmentDetailSheet({
             </button>
           ) : null}
         </div>
+        {error ? (
+          <p className="mt-3 rounded-2xl border border-red-300/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-100">
+            {error}
+          </p>
+        ) : null}
       </section>
     </div>
   );
@@ -4986,18 +5202,37 @@ function AppointmentDetailSheet({
 
 function MyProsPanel({
   connectedProfiles,
+  notifications,
+  onBookProfessional,
+  onOpenProfessional,
   savedProfiles,
-  onBookSaved,
 }: {
   connectedProfiles: Professional[];
+  notifications: ClientNotification[];
+  onBookProfessional: (profile: Professional) => void;
+  onOpenProfessional: (profile: Professional) => void;
   savedProfiles: Professional[];
-  onBookSaved: (profileId: string) => void;
 }) {
   const connectedIds = new Set(connectedProfiles.map((profile) => profile.id));
+  const unreadByProfessional = new Map<string, number>();
+  const promoByProfessional = new Set<string>();
+  notifications.forEach((notification) => {
+    if (!notification.professionalId || notification.readAt) return;
+    unreadByProfessional.set(
+      notification.professionalId,
+      (unreadByProfessional.get(notification.professionalId) || 0) + 1,
+    );
+    if (/promo/i.test(notification.type))
+      promoByProfessional.add(notification.professionalId);
+  });
   const profiles = [
     ...connectedProfiles,
     ...savedProfiles.filter((profile) => !connectedIds.has(profile.id)),
-  ];
+  ].sort(
+    (a, b) =>
+      (unreadByProfessional.get(b.id) || 0) -
+      (unreadByProfessional.get(a.id) || 0),
+  );
 
   return (
     <div className="mt-5 grid gap-3">
@@ -5015,28 +5250,55 @@ function MyProsPanel({
       ) : (
         profiles.map((profile) => {
           const connected = connectedIds.has(profile.id);
+          const unreadCount = unreadByProfessional.get(profile.id) || 0;
+          const hasPromo = promoByProfessional.has(profile.id);
           return (
-          <button
-            key={profile.id}
-            className="flex items-center gap-4 rounded-[24px] border border-white/10 bg-[#151519] p-3 text-left"
-            type="button"
-            onClick={() => onBookSaved(profile.id)}
-          >
-            <img
-              className="h-20 w-20 rounded-2xl object-cover"
-              src={profile.heroImage}
-              alt=""
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block text-xl font-black">{profile.name}</span>
-              <span className="block text-sm font-semibold text-white/60">
-                {profile.role} · {profile.neighborhood}
-              </span>
-              <span className="mt-1 block text-sm font-black text-[#f4c430]">
-                {connected ? 'Connected · Book appointment' : 'Saved'}
-              </span>
-            </span>
-          </button>
+            <article
+              key={profile.id}
+              className="rounded-[24px] border border-white/10 bg-[#151519] p-3"
+            >
+              <button
+                className="flex w-full items-center gap-4 text-left"
+                type="button"
+                onClick={() => onOpenProfessional(profile)}
+              >
+                <img
+                  className="h-20 w-20 rounded-2xl object-cover"
+                  src={profile.heroImage}
+                  alt=""
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xl font-black">{profile.name}</span>
+                  <span className="block text-sm font-semibold text-white/60">
+                    {profile.role} · {profile.neighborhood}
+                  </span>
+                  <span className="mt-1 block text-sm font-black text-[#f4c430]">
+                    {connected ? 'Connected' : 'Saved'}
+                  </span>
+                </span>
+              </button>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {unreadCount ? (
+                  <span className="rounded-full border border-[#f4c430]/35 bg-[#f4c430]/12 px-3 py-1 text-xs font-black text-[#f4c430]">
+                    {unreadCount} new
+                  </span>
+                ) : null}
+                {hasPromo ? (
+                  <span className="rounded-full border border-white/15 px-3 py-1 text-xs font-black text-white">
+                    Deal
+                  </span>
+                ) : null}
+                {connected ? (
+                  <button
+                    className="ml-auto min-h-10 rounded-2xl bg-[#f4c430] px-4 text-sm font-black text-black"
+                    type="button"
+                    onClick={() => onBookProfessional(profile)}
+                  >
+                    Book appointment
+                  </button>
+                ) : null}
+              </div>
+            </article>
           );
         })
       )}
@@ -5793,33 +6055,21 @@ function ProductsPanel({ isDemo }: { isDemo: boolean }) {
 function ClientPassportPanel({
   clientSession,
   isDemo,
-  onDeleteAccount,
-  onSignOut,
 }: {
   clientSession: ClientSession | null;
   isDemo: boolean;
-  onDeleteAccount: () => void;
-  onSignOut: () => void;
 }) {
   return isDemo ? (
     <LegacyPreviewClientPassportPanel />
   ) : (
-    <ProductionClientPassportPanel
-      clientSession={clientSession}
-      onDeleteAccount={onDeleteAccount}
-      onSignOut={onSignOut}
-    />
+    <ProductionClientPassportPanel clientSession={clientSession} />
   );
 }
 
 function ProductionClientPassportPanel({
   clientSession,
-  onDeleteAccount,
-  onSignOut,
 }: {
   clientSession: ClientSession | null;
-  onDeleteAccount: () => void;
-  onSignOut: () => void;
 }) {
   const [clientId, setClientId] = useState('');
   const [currentHairPhoto, setCurrentHairPhoto] = useState<ClientPhoto | null>(
@@ -5831,6 +6081,7 @@ function ProductionClientPassportPanel({
   const [mediaMessage, setMediaMessage] = useState('');
   const [mediaBusy, setMediaBusy] = useState(false);
   const [passportBusy, setPassportBusy] = useState(false);
+  const [passportOpen, setPassportOpen] = useState(false);
   const [captionDraft, setCaptionDraft] = useState('');
 
   useEffect(() => {
@@ -6142,6 +6393,23 @@ function ProductionClientPassportPanel({
 
   return (
     <div className="mt-5 space-y-4">
+      <div className="flex items-center justify-between gap-3 rounded-[24px] border border-white/10 bg-[#151519] p-4">
+        <div>
+          <h2 className="text-2xl font-black">Hair Profile</h2>
+          <p className="mt-1 text-sm font-semibold text-white/55">
+            Your current hair photo and inspiration photos.
+          </p>
+        </div>
+        <button
+          className="grid h-12 w-12 place-items-center rounded-2xl border border-[#f4c430]/35 text-[#f4c430]"
+          type="button"
+          aria-label="Open Hair Profile QR"
+          onClick={() => setPassportOpen(true)}
+        >
+          <QrCode size={22} />
+        </button>
+      </div>
+
       <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
         <div className="flex items-center gap-4">
           {currentHairPhoto ? (
@@ -6156,16 +6424,12 @@ function ProductionClientPassportPanel({
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-black">Current hair photos</h2>
-            <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
-              Add actual photos of your current hair or completed cuts. Frizi
-              can use the most recent suitable hair photo as your avatar.
-            </p>
+            <h2 className="text-2xl font-black">Upload a profile image</h2>
           </div>
         </div>
         <label className="mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 font-black text-black">
           <Camera size={18} />
-          Upload current hair photo
+          {currentHairPhoto ? 'Change image' : 'Upload image'}
           <input
             className="sr-only"
             type="file"
@@ -6178,6 +6442,16 @@ function ProductionClientPassportPanel({
             }}
           />
         </label>
+        {currentHairPhoto ? (
+          <button
+            className="mt-3 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
+            type="button"
+            disabled={mediaBusy}
+            onClick={() => void removeClientPhoto(currentHairPhoto)}
+          >
+            Remove image
+          </button>
+        ) : null}
       </div>
 
       <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
@@ -6215,15 +6489,33 @@ function ProductionClientPassportPanel({
         />
       </div>
 
-      <PhotoBoard
-        description="Photos added after completed appointments will appear here with your consent."
-        photos={hairPhotos}
-        title="Completed haircut photos"
-      />
-
-      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-        <QrCode className="text-[#f4c430]" size={30} />
-        <h2 className="mt-4 text-2xl font-black">Hair passport QR</h2>
+      {passportOpen ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-end bg-black/58 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPassportOpen(false);
+          }}
+        >
+          <section
+            className="w-full rounded-[28px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60 sm:max-w-md"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hair-passport-qr-title"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="hair-passport-qr-title" className="text-2xl font-black">
+                Hair Profile QR
+              </h2>
+              <button
+                className="grid h-10 w-10 place-items-center rounded-full border border-white/12 bg-white/[0.05]"
+                type="button"
+                aria-label="Close Hair Profile QR"
+                onClick={() => setPassportOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
         {clientSession && passport ? (
           <>
             <p className="mt-2 leading-7 text-white/68">
@@ -6270,48 +6562,15 @@ function ProductionClientPassportPanel({
               : 'Sign in to prepare your client hair passport.'}
           </p>
         )}
-      </div>
+          </section>
+        </div>
+      ) : null}
 
       {mediaMessage ? (
         <p className="rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-4 py-3 text-sm font-bold text-[#f4c430]">
           {mediaMessage}
         </p>
       ) : null}
-
-      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-        <User className="text-[#f4c430]" size={30} />
-        <h2 className="mt-4 text-2xl font-black">Settings</h2>
-        <div className="mt-4 rounded-2xl border border-white/10">
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 font-black text-white">
-              Account
-              <ChevronDown
-                className="transition group-open:rotate-180"
-                size={18}
-              />
-            </summary>
-            <div className="border-t border-white/10 p-3">
-              <button
-                className="w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
-                type="button"
-                onClick={onSignOut}
-                disabled={!clientSession}
-              >
-                Sign out
-              </button>
-              <button
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-300/35 px-4 py-3 text-sm font-black text-red-100"
-                type="button"
-                onClick={onDeleteAccount}
-                disabled={!clientSession}
-              >
-                <Trash2 size={16} />
-                Delete account
-              </button>
-            </div>
-          </details>
-        </div>
-      </div>
     </div>
   );
 }
@@ -6543,6 +6802,10 @@ function normalizeClientProfessionalId(value: string) {
 }
 
 function appointmentStatusLabel(status: BookingRequest['status']) {
+  if (status === 'expired')
+    return { short: 'Expired', detail: 'Not confirmed' };
+  if (status === 'requested')
+    return { short: 'Pending', detail: 'Waiting for confirmation' };
   if (status === 'confirmed')
     return { short: 'Confirmed', detail: 'Confirmed' };
   if (status === 'cancelled')
@@ -6557,6 +6820,23 @@ function appointmentStartDate(booking: BookingRequest) {
   const source = booking.scheduledStart || booking.time;
   const date = source ? new Date(source) : new Date(booking.date);
   return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function isAppointmentPast(booking: BookingRequest) {
+  const endSource = booking.scheduledEnd || booking.scheduledStart || booking.time;
+  const date = endSource ? new Date(endSource) : appointmentStartDate(booking);
+  return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
+}
+
+function formatNotificationDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-CA', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function formatAppointmentDayShort(booking: BookingRequest) {
@@ -6650,10 +6930,12 @@ function bookingFromApiAppointment(
     eventId: String(appointment.id || `appt_${Date.now().toString(36)}`),
     status: [
       'pending',
+      'requested',
       'confirmed',
       'declined',
       'cancelled',
       'completed',
+      'expired',
     ].includes(status)
       ? status
       : 'pending',
