@@ -5006,7 +5006,7 @@ function ClientPushPermissionPrompt() {
         {message ? <em className="mt-1 block text-xs font-bold text-[#f4c430]">{message}</em> : null}
       </div>
       <div className="col-span-2 grid gap-2 sm:col-start-2 sm:col-end-3 sm:grid-cols-2">
-        <button className="min-h-11 rounded-2xl bg-[#f4c430] px-4 py-3 text-sm font-black text-black" type="button" disabled={enabling} onClick={() => void enable()}>
+        <button className="friziGoldButton min-h-11 rounded-2xl px-4 py-3 text-sm font-black" type="button" disabled={enabling} onClick={() => void enable()}>
           {enabling ? 'Enabling...' : 'Enable notifications'}
         </button>
         <button className="min-h-11 rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-3 text-sm font-black text-white" type="button" disabled={enabling} onClick={dismiss}>
@@ -5830,7 +5830,7 @@ function ClientSettingsPanel({
             </div>
             {!pushEnabled && pushSupportedLabel && pushPermission !== 'denied' ? (
               <button
-                className="mt-3 min-h-11 w-full rounded-2xl bg-[#f4c430] px-4 text-sm font-black text-black"
+                className="friziGoldButton mt-3 min-h-11 w-full rounded-2xl px-4 text-sm font-black"
                 type="button"
                 disabled={pushBusy}
                 onClick={() => void enablePushFromSettings()}
