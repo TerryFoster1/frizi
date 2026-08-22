@@ -2,7 +2,7 @@ import webpush from 'web-push';
 
 const vapidPublicKey = process.env.FRIZI_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || '';
 const vapidPrivateKey = process.env.FRIZI_VAPID_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || '';
-const vapidSubject = process.env.FRIZI_VAPID_SUBJECT || 'mailto:hello@frizi.ca';
+const vapidSubject = process.env.FRIZI_VAPID_SUBJECT || 'mailto:support@frizi.ca';
 
 function pushConfigured() {
   return Boolean(vapidPublicKey && vapidPrivateKey);
