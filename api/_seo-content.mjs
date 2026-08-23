@@ -6,42 +6,137 @@ export const faqItems = [
   {
     question: 'What is Frizi?',
     answer:
-      'Frizi helps clients find local hair professionals, book directly, message their pro, and keep a portable hair profile with preferences and photos.',
+      'Frizi helps you find, connect with and book hair professionals directly. Search for barbers, hairstylists, colourists and other hair professionals by service, specialty or your specific needs, then keep the relationship in one place.',
   },
   {
-    question: 'Can I search before creating an account?',
+    question: 'How does Frizi help me find a hairstylist or barber?',
     answer:
-      'Yes. You can search and review public professional profiles before signing in. You only need an account when you want to save, connect, message, or book.',
+      'Search Frizi by service, specialty or what you need help with. You can compare individual professionals, view their services and profiles, read reviews and find someone who fits your style.',
   },
   {
-    question: 'Does Frizi replace my salon or barber?',
+    question: 'Can I search for barbers near me?',
     answer:
-      'No. Frizi helps you find and stay connected with the professional you choose. The relationship remains between you and your hair professional.',
+      "Yes. Frizi is designed to help you discover local barbers and other hair professionals based on your location, the service you need and the professional's specialties.",
   },
   {
-    question: 'Can I book directly with a professional?',
+    question: 'Can I search for hairstylists by specialty?',
     answer:
-      'Yes. When a professional is live and bookable on Frizi, you can see available services and times, then book directly through Frizi.',
+      'Yes. Frizi can help you find professionals based on specialties and services such as colour, balayage, curly hair, fine hair, fades, beard grooming, extensions and more as matching professionals join the platform.',
   },
   {
-    question: 'Can I message my hair professional?',
+    question: 'Can I search for a professional who understands my hair type?',
     answer:
-      'Yes. Frizi is designed so connected clients and professionals can keep appointment, preference, and hair-care communication in one place.',
+      'Yes. Frizi professional profiles can include specialties and experience with different hair types and needs, helping you find someone whose skills match your hair.',
   },
   {
-    question: 'What is a Hair Passport?',
+    question: 'Can I find curly hair specialists on Frizi?',
     answer:
-      'Your Hair Passport is your client profile for hair photos, preferences, inspiration photos, notes, and appointment history that can move with you.',
+      'Frizi allows professionals to identify specialties such as curly and textured hair so clients can find professionals with relevant experience. Availability depends on professionals currently listed in your area.',
   },
   {
-    question: 'Are reviews real?',
+    question: 'Can I find professionals experienced with fine or thin hair?',
     answer:
-      'Frizi is built around verified professional relationships and real appointments. Public review pages should only show real review data when it exists.',
+      'Yes. Professionals can list fine or thin hair among their specialties, making it easier to find someone who understands how to cut, style and work with your hair type.',
   },
   {
-    question: 'What happens if no professionals are available near me yet?',
+    question: 'Can I find beard grooming services?',
     answer:
-      'You can nominate a professional in your area. Frizi will not show fake professionals or fake rankings to fill empty results.',
+      'Yes. Search Frizi for beard trims, beard grooming and related barber services to find professionals offering them near you.',
+  },
+  {
+    question: 'Can I find colourists and balayage specialists?',
+    answer:
+      'Yes. Search by services and specialties such as hair colour, highlights, balayage and colour correction to find professionals who offer what you need.',
+  },
+  {
+    question: 'Can I find LGBTQ+ friendly hair professionals?',
+    answer:
+      "Frizi can help clients discover professionals who have identified their services as LGBTQ+ welcoming. Frizi does not infer this information about professionals; it is based on the professional's own public profile and service information.",
+  },
+  {
+    question: 'Can I find hijab-friendly or private hair services?',
+    answer:
+      "Professionals can identify options such as private appointments or hijab-friendly hair services on their Frizi profile. Always review the professional's information or message them before booking if you need a specific accommodation.",
+  },
+  {
+    question: 'Can I search for wheelchair-accessible hair professionals?',
+    answer:
+      'Frizi can surface accessibility information provided by professionals, including wheelchair accessibility where available. You can also message the professional before booking to confirm your specific needs.',
+  },
+  {
+    question: 'Can I book a haircut online with Frizi?',
+    answer:
+      'Yes. When a professional accepts online bookings through Frizi, you can choose a service, view available appointment times and request or book an appointment directly with that professional.',
+  },
+  {
+    question: 'Do I need a Frizi account to book an appointment?',
+    answer:
+      'You can search before creating an account. A free Frizi account gives you appointment management, saved professionals, messages, reminders and your Hair Profile when you are ready to connect or book.',
+  },
+  {
+    question: 'Can I message a barber or hairstylist before booking?',
+    answer:
+      'Frizi messaging lets clients communicate directly with connected professionals. This can be useful for questions about services, pricing, hair needs or what to expect before an appointment.',
+  },
+  {
+    question: 'Can I ask a stylist questions before my appointment?',
+    answer:
+      'Yes. You can use Frizi messaging with supported professionals to ask questions about your appointment, service or hair before you arrive.',
+  },
+  {
+    question: 'Can I cancel or change my appointment through Frizi?',
+    answer:
+      "Frizi appointment tools are designed to let clients manage bookings directly with their professional, including cancellations and appointment changes where supported by the professional's booking rules.",
+  },
+  {
+    question: 'What is a Frizi Hair Profile?',
+    answer:
+      'Your Frizi Hair Profile keeps useful information about your hair and style in one place. It can include photos, inspiration and preferences that help your hair professional understand what you like before you sit down in the chair.',
+  },
+  {
+    question: 'Can my hairstylist save notes about how I like my hair?',
+    answer:
+      'Frizi gives connected professionals tools to keep useful haircut and client notes so they can remember details such as your preferred length, styling preferences and previous services. Private professional CRM notes remain separate from information shared with the client.',
+  },
+  {
+    question: 'Can I save inspiration photos for my hairstylist?',
+    answer:
+      'Yes. Your Hair Profile can include inspiration photos so you can show your professional the cuts, colours or styles you are considering.',
+  },
+  {
+    question: 'Can my hair professional recommend products through Frizi?',
+    answer:
+      'Frizi is being built to help professionals recommend products based on what they know about their clients hair needs. Product shopping features may be marked Coming Soon until the Frizi product marketplace is live.',
+  },
+  {
+    question: 'Are Frizi reviews for the salon or the individual professional?',
+    answer:
+      'Frizi is built around the individual professional. Reviews can help clients understand the person who will actually be working on their hair rather than relying only on reviews of the salon or shop.',
+  },
+  {
+    question: 'Can I keep my reviews if my hairstylist changes salons?',
+    answer:
+      'Frizi professional profiles are designed around the individual professional, allowing their Frizi reputation and client relationships to stay connected to them as their career changes.',
+  },
+  {
+    question: 'How do I find highly rated barbers near me?',
+    answer:
+      "Search Frizi for barbers in your area and compare individual professional profiles and available reviews. As Frizi's review network grows, local discovery pages will make it easier to compare professionals based on real client feedback.",
+  },
+  {
+    question: 'How do I find the best hairstylist for my needs?',
+    answer:
+      'Start with the service you need, then consider specialties, portfolio photos, individual reviews, location and availability. The best fit is not always the same professional for everyone, which is why Frizi focuses on helping you choose the individual professional who fits your hair and style.',
+  },
+  {
+    question: 'How do hair professionals join Frizi?',
+    answer:
+      'Hair professionals can create a Frizi Pro profile to manage bookings, connect with clients, build their professional reputation and make it easier for new clients to discover them.',
+  },
+  {
+    question: 'Can I nominate my barber or hairstylist for Frizi?',
+    answer:
+      'Yes. If your favourite professional is not on Frizi yet, you can nominate them. Your nomination helps Frizi identify great local professionals that clients want to see on the platform.',
   },
 ];
 
@@ -84,7 +179,23 @@ export const cityPages = {
   'kitchener-on': { name: 'Kitchener', province: 'ON' },
   'waterloo-on': { name: 'Waterloo', province: 'ON' },
   'cambridge-on': { name: 'Cambridge', province: 'ON' },
+  'guelph-on': { name: 'Guelph', province: 'ON' },
+  'london-on': { name: 'London', province: 'ON' },
+  'hamilton-on': { name: 'Hamilton', province: 'ON' },
+  'burlington-on': { name: 'Burlington', province: 'ON' },
+  'oakville-on': { name: 'Oakville', province: 'ON' },
+  'mississauga-on': { name: 'Mississauga', province: 'ON' },
+  'brampton-on': { name: 'Brampton', province: 'ON' },
   'toronto-on': { name: 'Toronto', province: 'ON' },
+  'vaughan-on': { name: 'Vaughan', province: 'ON' },
+  'markham-on': { name: 'Markham', province: 'ON' },
+  'richmond-hill-on': { name: 'Richmond Hill', province: 'ON' },
+  'barrie-on': { name: 'Barrie', province: 'ON' },
+  'kingston-on': { name: 'Kingston', province: 'ON' },
+  'ottawa-on': { name: 'Ottawa', province: 'ON' },
+  'windsor-on': { name: 'Windsor', province: 'ON' },
+  'niagara-falls-on': { name: 'Niagara Falls', province: 'ON' },
+  'st-catharines-on': { name: 'St. Catharines', province: 'ON' },
 };
 
 export const discoveryCategories = {
@@ -151,12 +262,12 @@ export const discoveryCategories = {
 };
 
 export const reviewCategories = {
-  'barber-reviews': { baseCategory: 'barbers', title: 'Barber reviews' },
-  'hairstylist-reviews': {
+  barbers: { baseCategory: 'barbers', title: 'Barber reviews' },
+  hairstylists: {
     baseCategory: 'hairstylists',
     title: 'Hairstylist reviews',
   },
-  'colourist-reviews': {
+  colourists: {
     baseCategory: 'colourists',
     title: 'Colourist reviews',
   },
@@ -165,6 +276,98 @@ export const reviewCategories = {
 export const rankedCategories = {
   'best-barbers': { baseCategory: 'barbers', title: 'Best barbers' },
   'top-colourists': { baseCategory: 'colourists', title: 'Top colourists' },
+};
+
+export const hairTipCategories = [
+  'Haircuts & Styling',
+  'Hair Health',
+  'Colour',
+  'Curly & Textured Hair',
+  'Fine & Thin Hair',
+  'Beards & Grooming',
+  'Products',
+  'DIY Hair Care',
+];
+
+export const hairTipArticles = {
+  'how-to-choose-a-barber': {
+    title: 'How to Choose a Barber | Find the Right Barber for You | Frizi',
+    h1: 'How to Choose a Barber',
+    description:
+      'Learn how to choose a barber by comparing services, specialties, portfolio work, communication, pricing, location, availability and individual reviews.',
+    category: 'Beards & Grooming',
+    cta: { label: 'Find a Barber', href: '/barbers' },
+    sections: [
+      {
+        heading: 'Start with the service you actually need',
+        body: 'A quick cleanup, a skin fade, a beard trim and a full restyle can require different strengths. Look for a barber whose services and photos match the kind of work you want most often.',
+      },
+      {
+        heading: 'Compare the person, not just the shop',
+        body: 'Salon or barbershop reviews can be useful, but Frizi is built around the individual professional. Check their specialties, portfolio, service descriptions and public reviews so you know who will be cutting your hair.',
+      },
+      {
+        heading: 'Look for communication and consistency',
+        body: 'A good barber should understand your style, ask useful questions and remember what worked last time. Saving notes and photos in your Frizi Hair Profile helps make every future appointment easier.',
+      },
+      {
+        heading: 'Check practical fit',
+        body: 'Location, price, appointment length and availability all matter. The right barber is someone whose work fits your style and whose schedule works with your life.',
+      },
+    ],
+  },
+  'how-to-find-a-good-hairstylist': {
+    title: 'How to Find a Good Hairstylist | Frizi',
+    h1: 'How to Find a Good Hairstylist',
+    description:
+      'Learn how to find a hairstylist by comparing your hair type, service needs, specialties, portfolio work, reviews, communication and availability.',
+    category: 'Haircuts & Styling',
+    cta: { label: 'Find a Hairstylist', href: '/hairstylists' },
+    sections: [
+      {
+        heading: 'Know what you want help with',
+        body: 'Start with your hair type and goal. Fine hair, curly hair, colour correction, extensions, blowouts and major cut changes can each call for different experience.',
+      },
+      {
+        heading: 'Use portfolios and specialties together',
+        body: 'Photos show taste and technique, while specialties show where a professional says they are strongest. The best signal is when the portfolio, service list and reviews all point in the same direction.',
+      },
+      {
+        heading: 'Ask questions before you commit',
+        body: 'A good consultation can clarify maintenance, price, timing and whether the style fits your hair. Frizi is designed to keep that communication connected to your professional relationship.',
+      },
+      {
+        heading: 'Keep the relationship portable',
+        body: 'When you find someone you trust, you should not lose them because they change salons. Frizi profiles are centred on the individual professional, not just the location.',
+      },
+    ],
+  },
+  'how-to-style-thin-hair': {
+    title: 'How to Style Thin Hair | Tips for Fine & Thin Hair | Frizi',
+    h1: 'How to Style Thin Hair',
+    description:
+      'Practical styling tips for thin or fine hair, including lightweight products, volume, drying technique, haircut choices and when to ask a stylist for help.',
+    category: 'Fine & Thin Hair',
+    cta: { label: 'Find a Pro Who Understands Fine Hair', href: '/fine-hair/kitchener-on' },
+    sections: [
+      {
+        heading: 'Keep products lightweight',
+        body: 'Heavy creams, oils and waxes can make fine or thin hair sit flatter. Lightweight mousse, texture spray or a small amount of volumizing product can help create lift without weighing hair down.',
+      },
+      {
+        heading: 'Build volume while drying',
+        body: 'Drying at the roots, changing your part and using a brush or fingers to lift sections can make hair look fuller. Use heat carefully and avoid overworking fragile ends.',
+      },
+      {
+        heading: 'Choose a cut that supports fullness',
+        body: 'Shape matters. A stylist who understands fine hair can help choose a length, layering approach and styling plan that makes your hair easier to manage day to day.',
+      },
+      {
+        heading: 'Know when to get extra help',
+        body: 'These are cosmetic styling tips, not medical advice. If you notice sudden hair loss, scalp pain, inflammation or unexplained shedding, speak with a qualified healthcare professional.',
+      },
+    ],
+  },
 };
 
 export function escapeHtml(value) {
@@ -244,6 +447,7 @@ export function pageShell({
     .brand { font-size:24px; font-weight:950; letter-spacing:.18em; text-decoration:none; }
     .cta, button { display:inline-flex; min-height:48px; align-items:center; justify-content:center; border:1px solid var(--ink); border-radius:12px; background:var(--ink); color:#fffaf0; padding:0 18px; font-weight:900; text-decoration:none; }
     .ghost { background:#fff; color:var(--ink); }
+    .cta:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--gold); outline-offset:3px; }
     h1 { margin:24px 0 14px; font-size:clamp(38px, 8vw, 70px); line-height:1.03; letter-spacing:0; }
     h2 { margin:34px 0 14px; font-size:clamp(26px, 5vw, 38px); line-height:1.1; }
     h3 { margin:0 0 8px; font-size:22px; }
@@ -258,11 +462,20 @@ export function pageShell({
     .notice { border-left:5px solid var(--gold); background:#fff; padding:18px; border-radius:14px; }
     .faq dt { margin-top:18px; font-size:20px; font-weight:900; }
     .faq dd { margin:8px 0 0; color:var(--muted); font-size:17px; line-height:1.5; }
+    details.faq-item { border-top:1px solid var(--line); padding:16px 0; }
+    details.faq-item summary { cursor:pointer; font-size:19px; font-weight:900; list-style:none; }
+    details.faq-item summary::-webkit-details-marker { display:none; }
+    details.faq-item p { margin:10px 0 0; font-size:17px; }
     label { display:grid; gap:7px; margin-top:14px; font-weight:900; }
     input, textarea, select { width:100%; min-height:48px; border:1px solid var(--line); border-radius:12px; padding:10px 12px; font:inherit; background:#fff; color:var(--ink); }
     textarea { min-height:112px; resize:vertical; }
+    .footer-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:18px; }
+    .footer-grid h2 { margin:0 0 8px; font-size:15px; text-transform:uppercase; }
+    .footer-grid a { display:block; margin:8px 0; color:var(--muted); text-decoration:none; }
     footer { margin-top:46px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); }
+    footer > p { font-size:15px; }
     @media (max-width:560px) { .page { width:min(100% - 28px, 520px); } .top { align-items:flex-start; } .brand { font-size:20px; } }
+    @media (max-width:560px) { .footer-grid { grid-template-columns:1fr; } }
   </style>
   ${ld}
 </head>
@@ -273,7 +486,28 @@ export function pageShell({
       <a class="cta ghost" href="/nominate-a-pro">Nominate a pro</a>
     </nav>
     ${body}
-    <footer>Frizi connects clients with real local hair professionals. Product commerce is Coming Soon.</footer>
+    <footer>
+      <div class="footer-grid">
+        <section>
+          <h2>Find a Pro</h2>
+          <a href="/barbers">Barbers</a>
+          <a href="/hairstylists">Hairstylists</a>
+          <a href="/colourists">Colourists</a>
+        </section>
+        <section>
+          <h2>Explore</h2>
+          <a href="/hair-tips">Hair Tips</a>
+          <a href="/reviews/barbers/kitchener-on">Reviews</a>
+          <a href="/learn">Learn</a>
+        </section>
+        <section>
+          <h2>Frizi</h2>
+          <a href="/nominate-a-pro">Nominate a Pro</a>
+          <a href="https://pro.frizi.ca">Frizi for Professionals</a>
+        </section>
+      </div>
+      <p>Frizi connects clients with real local hair professionals. Product commerce is Coming Soon.</p>
+    </footer>
   </main>
 </body>
 </html>`;

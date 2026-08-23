@@ -5,11 +5,12 @@ const staticPaths = [
   '/learn',
   '/nominate-a-pro',
   '/hair-tips',
-  '/barbers/kitchener-on',
-  '/hairstylists/kitchener-on',
-  '/colourists/kitchener-on',
-  '/balayage/kitchener-on',
-  '/beard-grooming/kitchener-on',
+  '/hair-tips/how-to-choose-a-barber',
+  '/hair-tips/how-to-find-a-good-hairstylist',
+  '/hair-tips/how-to-style-thin-hair',
+  '/barbers',
+  '/hairstylists',
+  '/colourists',
 ];
 
 function xmlEscape(value) {

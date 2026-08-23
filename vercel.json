@@ -29,6 +29,23 @@
       ]
     }
   ],
+  "redirects": [
+    {
+      "source": "/barber-reviews/:city",
+      "destination": "/reviews/barbers/:city",
+      "permanent": true
+    },
+    {
+      "source": "/hairstylist-reviews/:city",
+      "destination": "/reviews/hairstylists/:city",
+      "permanent": true
+    },
+    {
+      "source": "/colourist-reviews/:city",
+      "destination": "/reviews/colourists/:city",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/sitemap.xml",
@@ -53,6 +70,18 @@
     {
       "source": "/pro/:slug",
       "destination": "/api/seo-page?path=/pro/:slug"
+    },
+    {
+      "source": "/barbers",
+      "destination": "/api/seo-page?path=/barbers"
+    },
+    {
+      "source": "/hairstylists",
+      "destination": "/api/seo-page?path=/hairstylists"
+    },
+    {
+      "source": "/colourists",
+      "destination": "/api/seo-page?path=/colourists"
     },
     {
       "source": "/barbers/:city",
@@ -95,16 +124,8 @@
       "destination": "/api/seo-page?path=/hair-extensions/:city"
     },
     {
-      "source": "/barber-reviews/:city",
-      "destination": "/api/seo-page?path=/barber-reviews/:city"
-    },
-    {
-      "source": "/hairstylist-reviews/:city",
-      "destination": "/api/seo-page?path=/hairstylist-reviews/:city"
-    },
-    {
-      "source": "/colourist-reviews/:city",
-      "destination": "/api/seo-page?path=/colourist-reviews/:city"
+      "source": "/reviews/:category/:city",
+      "destination": "/api/seo-page?path=/reviews/:category/:city"
     },
     {
       "source": "/best-barbers/:city",

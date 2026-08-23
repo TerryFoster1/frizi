@@ -5,6 +5,8 @@ import {
   escapeHtml,
   faqItems,
   faqJsonLd,
+  hairTipArticles,
+  hairTipCategories,
   learnSections,
   loadPublicProfessionals,
   pageShell,
@@ -37,7 +39,7 @@ function routePath(request) {
 
 function renderLearnPage(pathname) {
   const body = `
-    <h1>Find the right hair professional-and keep them.</h1>
+    <h1>Find the right hair professional and keep them.</h1>
     <p class="lead">Frizi helps clients discover local hair professionals, book directly, and keep their hair profile connected to the person doing the work.</p>
     <div class="grid">
       ${learnSections
@@ -51,14 +53,19 @@ function renderLearnPage(pathname) {
     </div>
     <section>
       <h2>FAQ</h2>
-      <dl class="faq">
+      <div class="faq">
         ${faqItems
           .map(
             (item) =>
-              `<dt>${escapeHtml(item.question)}</dt><dd>${escapeHtml(item.answer)}</dd>`,
+              `<details class="faq-item"><summary>${escapeHtml(item.question)}</summary><p>${escapeHtml(item.answer)}</p></details>`,
           )
           .join('')}
-      </dl>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Ready to find your Pro?</h2>
+      <p>Start with a service, specialty or city and Frizi will show real professionals when they are live and bookable.</p>
+      <p><a class="cta" href="/">Find a Pro</a> <a class="cta ghost" href="/nominate-a-pro">Nominate a Pro</a></p>
     </section>
   `;
 
@@ -124,14 +131,22 @@ function renderNominationPage(pathname, success = false) {
 }
 
 function renderHairTips(pathname) {
+  const publishedArticles = Object.entries(hairTipArticles);
   const body = `
-    <h1>Hair tips</h1>
-    <p class="lead">Frizi hair tips will focus on practical, professional-informed guidance for choosing services, preparing for appointments, and keeping your Hair Passport useful.</p>
+    <h1>Hair Tips from Frizi Pros</h1>
+    <p class="lead">Practical advice for better hair, better grooming and getting more from your appointments.</p>
     <div class="grid">
-      <article class="card"><h2>Choosing a professional</h2><p>Learn what to look for when comparing services, specialties, portfolios, and availability.</p></article>
-      <article class="card"><h2>Preparing for a booking</h2><p>Bring clear inspiration photos, note what has worked before, and keep your goals in your Hair Passport.</p></article>
-      <article class="card"><h2>Product recommendations</h2><p>Product commerce is Coming Soon. Frizi will only publish product guidance when it is ready to support the client experience properly.</p></article>
+      ${publishedArticles
+        .map(
+          ([slug, article]) =>
+            `<article class="card"><h2><a href="/hair-tips/${escapeHtml(slug)}">${escapeHtml(article.h1)}</a></h2><p>${escapeHtml(article.description)}</p><p><span class="tag">${escapeHtml(article.category)}</span></p></article>`,
+        )
+        .join('')}
     </div>
+    <section>
+      <h2>Categories</h2>
+      <div class="tags">${hairTipCategories.map((category) => `<span class="tag">${escapeHtml(category)}</span>`).join('')}</div>
+    </section>
   `;
 
   return pageShell({
@@ -149,8 +164,55 @@ function renderHairTips(pathname) {
   });
 }
 
-function renderHairTipStub(pathname) {
+function renderHairTipArticle(pathname) {
   const slug = pathname.split('/').filter(Boolean).at(-1) || 'hair-tip';
+  const article = hairTipArticles[slug];
+  if (article) {
+    const body = `
+      <h1>${escapeHtml(article.h1)}</h1>
+      <p class="lead">${escapeHtml(article.description)}</p>
+      <p><span class="tag">${escapeHtml(article.category)}</span> <span class="tag">Frizi editorial</span> <span class="tag">Updated August 23, 2026</span></p>
+      <div class="grid">
+        ${article.sections
+          .map(
+            (section) =>
+              `<section class="card"><h2>${escapeHtml(section.heading)}</h2><p>${escapeHtml(section.body)}</p></section>`,
+          )
+          .join('')}
+      </div>
+      <section class="card">
+        <h2>Find help near you</h2>
+        <p>Use Frizi to find an individual professional whose services, specialties, communication style and availability fit what you need.</p>
+        <p><a class="cta" href="${escapeHtml(article.cta.href)}">${escapeHtml(article.cta.label)}</a></p>
+      </section>
+    `;
+
+    return pageShell({
+      title: article.title,
+      description: article.description,
+      pathname,
+      body,
+      jsonLd: [
+        breadcrumbJsonLd([
+          { name: 'Frizi', path: '/' },
+          { name: 'Hair tips', path: '/hair-tips' },
+          { name: article.h1, path: pathname },
+        ]),
+        {
+          '@context': 'https://schema.org',
+          '@type': 'Article',
+          headline: article.h1,
+          description: article.description,
+          datePublished: '2026-08-23',
+          dateModified: '2026-08-23',
+          author: { '@type': 'Organization', name: 'Frizi' },
+          publisher: { '@type': 'Organization', name: 'Frizi' },
+          mainEntityOfPage: `https://frizi.ca${pathname}`,
+        },
+      ],
+    });
+  }
+
   const readable = slug.replaceAll('-', ' ');
   const body = `
     <h1>${escapeHtml(readable.charAt(0).toUpperCase() + readable.slice(1))}</h1>
@@ -170,6 +232,40 @@ function renderHairTipStub(pathname) {
   });
 }
 
+function renderCategoryHub(pathname, categoryKey) {
+  const category = discoveryCategories[categoryKey];
+  if (!category) return null;
+  const popularCities = ['kitchener-on', 'waterloo-on', 'cambridge-on', 'toronto-on', 'london-on', 'ottawa-on'];
+  const body = `
+    <h1>Find ${escapeHtml(category.title)} Near You</h1>
+    <p class="lead">Find independent ${escapeHtml(category.plural)}, compare services and reviews, view availability and book directly with the professional you want.</p>
+    <section>
+      <h2>Popular locations</h2>
+      <div class="grid">
+        ${popularCities
+          .map((cityKey) => {
+            const city = cityPages[cityKey];
+            return `<a class="card" href="/${escapeHtml(categoryKey)}/${escapeHtml(cityKey)}">${escapeHtml(category.title)} in ${escapeHtml(city.name)}</a>`;
+          })
+          .join('')}
+      </div>
+    </section>
+  `;
+
+  return pageShell({
+    title: `Find ${category.title} Near You | Frizi`,
+    description: `Find local ${category.plural} on Frizi. Compare services, specialties, reviews and availability, then book directly online.`,
+    pathname,
+    body,
+    jsonLd: [
+      breadcrumbJsonLd([
+        { name: 'Frizi', path: '/' },
+        { name: category.title, path: pathname },
+      ]),
+    ],
+  });
+}
+
 async function renderDiscoveryPage(
   pathname,
   categoryKey,
@@ -181,7 +277,10 @@ async function renderDiscoveryPage(
   if (!city || !category) return null;
 
   const professionals = await loadPublicProfessionals({ categoryKey, cityKey });
-  const hasResults = professionals.length > 0;
+  const coreCategories = new Set(['barbers', 'hairstylists', 'colourists']);
+  const hasIndexableSupply =
+    !options.review &&
+    professionals.length >= (coreCategories.has(categoryKey) ? 3 : 2);
   const locationLabel = `${city.name}, ${city.province}`;
   const titlePrefix = options.title || category.title;
   const transparentRankCopy = options.ranked
@@ -191,29 +290,46 @@ async function renderDiscoveryPage(
     ? '<p class="notice">Review pages will show real review data when professionals have verified Frizi reviews. No fake ratings are shown.</p>'
     : '';
 
+  const h1Prefix = options.review
+    ? `${category.title.replace(/s$/, '')} Reviews`
+    : options.ranked
+      ? titlePrefix
+      : `Find ${titlePrefix}`;
   const body = `
-    <h1>${escapeHtml(titlePrefix)} in ${escapeHtml(locationLabel)}</h1>
-    <p class="lead">Find local ${escapeHtml(category.plural)} on Frizi and book directly when real availability is open.</p>
+    <h1>${escapeHtml(h1Prefix)} in ${escapeHtml(locationLabel)}</h1>
+    <p class="lead">Looking for ${escapeHtml(category.singular.startsWith('a') ? 'an' : 'a')} ${escapeHtml(category.singular)} in ${escapeHtml(city.name)}? Compare individual professionals on Frizi by services, specialties, reviews and availability, then book directly with the professional you want.</p>
+    <form class="card" action="/" method="get">
+      <label>Search services or specialties<input name="q" placeholder="Fade, curly hair, beard trim"></label>
+      <p><button type="submit">Search Frizi</button></p>
+    </form>
     ${transparentRankCopy}
     ${reviewCopy}
     ${renderProfessionalList(
       professionals,
       `Frizi does not have live ${category.plural} in ${locationLabel} yet.`,
     )}
+    <section class="card">
+      <h2>Nearby areas</h2>
+      <p><a href="/${escapeHtml(categoryKey)}/waterloo-on">Waterloo</a> · <a href="/${escapeHtml(categoryKey)}/cambridge-on">Cambridge</a> · <a href="/${escapeHtml(categoryKey)}/kitchener-on">Kitchener</a></p>
+    </section>
+    <section class="card">
+      <h2>Related Hair Tips</h2>
+      <p><a href="/hair-tips/how-to-choose-a-barber">How to choose a barber</a> · <a href="/hair-tips/how-to-find-a-good-hairstylist">How to find a good hairstylist</a></p>
+    </section>
   `;
 
   return pageShell({
     title: `${titlePrefix} in ${locationLabel} | Frizi`,
     description: `Find ${category.plural} in ${locationLabel} on Frizi. Frizi shows real live professionals only, with no fake rankings or filler profiles.`,
     pathname,
-    robots: hasResults ? 'index, follow' : 'noindex, follow',
+    robots: hasIndexableSupply ? 'index, follow' : 'noindex, follow',
     body,
     jsonLd: [
       breadcrumbJsonLd([
         { name: 'Frizi', path: '/' },
         { name: titlePrefix, path: pathname },
       ]),
-      hasResults
+      hasIndexableSupply
         ? {
             '@context': 'https://schema.org',
             '@type': 'ItemList',
@@ -269,7 +385,7 @@ async function renderProfessionalPage(pathname) {
     <section class="card">
       <h2>Services</h2>
       <ul>${services}</ul>
-      <p><a class="cta" href="/">Open Frizi to book</a></p>
+      <p><a class="cta" href="/">Book appointment</a> <a class="cta ghost" href="/">Message</a></p>
     </section>
   `;
 
@@ -319,12 +435,15 @@ export default async function handler(request, response) {
     if (pathname === '/hair-tips')
       return sendHtml(response, 200, renderHairTips(pathname));
     if (segments[0] === 'hair-tips')
-      return sendHtml(response, 200, renderHairTipStub(pathname));
+      return sendHtml(response, 200, renderHairTipArticle(pathname));
     if (segments[0] === 'pro') {
       return sendHtml(response, 200, await renderProfessionalPage(pathname));
     }
 
     const [categoryOrReview, cityKey] = segments;
+    if (segments.length === 1 && discoveryCategories[categoryOrReview]) {
+      return sendHtml(response, 200, renderCategoryHub(pathname, categoryOrReview));
+    }
     if (discoveryCategories[categoryOrReview]) {
       const html = await renderDiscoveryPage(
         pathname,
@@ -334,12 +453,12 @@ export default async function handler(request, response) {
       if (html) return sendHtml(response, 200, html);
     }
 
-    if (reviewCategories[categoryOrReview]) {
-      const review = reviewCategories[categoryOrReview];
+    if (segments[0] === 'reviews' && reviewCategories[segments[1]]) {
+      const review = reviewCategories[segments[1]];
       const html = await renderDiscoveryPage(
         pathname,
         review.baseCategory,
-        cityKey,
+        segments[2],
         {
           title: review.title,
           review: true,
