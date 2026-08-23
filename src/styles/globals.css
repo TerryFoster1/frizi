@@ -10,10 +10,10 @@
   --client-text: #27231f;
   --client-text-muted: #6f665d;
   --client-border: rgba(74, 66, 57, 0.16);
-  --client-accent: #c89b22;
-  --client-accent-strong: #a57712;
+  --client-accent: #ffc107;
+  --client-accent-strong: #c69200;
   --frizi-gold: var(--client-accent);
-  --frizi-on-gold: #17130c;
+  --frizi-on-gold: #000000;
   --client-danger: #a84232;
   --client-success: #22734d;
   font-family:
@@ -37,7 +37,7 @@ body {
   background:
     radial-gradient(
       circle at top left,
-      rgba(200, 155, 34, 0.16),
+      rgba(255, 193, 7, 0.16),
       transparent 30vw
     ),
     var(--client-gutter);
@@ -101,7 +101,7 @@ img {
 .clientApp [class*='text-[#f4c430]'],
 .clientApp [class*='text-yellow'],
 .clientApp svg.text-\[\#f4c430\] {
-  color: var(--client-accent-strong) !important;
+  color: var(--frizi-gold) !important;
 }
 
 .clientApp [class*='bg-[#f4c430]'] {
@@ -142,8 +142,8 @@ img {
 }
 
 .clientApp .clientMediaSurface [class*='bg-[#f4c430]'] {
-  background-color: #d6aa2c !important;
-  color: #130f09 !important;
+  background-color: var(--frizi-gold) !important;
+  color: var(--frizi-on-gold) !important;
 }
 
 .clientApp .clientMediaSurface [class*='border-white/'] {

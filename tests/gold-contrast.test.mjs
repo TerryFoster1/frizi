@@ -24,10 +24,11 @@ function contrast(foreground, background) {
 }
 
 test('Frizi Client gold buttons use dark foreground with AA contrast', () => {
+  assert.match(css, /--client-accent:\s*#ffc107;/)
   assert.match(css, /--frizi-gold:\s*var\(--client-accent\);/)
-  assert.match(css, /--frizi-on-gold:\s*#17130c;/)
+  assert.match(css, /--frizi-on-gold:\s*#000000;/)
   assert.match(css, /\.clientApp \.friziGoldButton\s*{[\s\S]*color:\s*var\(--frizi-on-gold\)\s*!important;/)
-  assert.ok(contrast('#17130c', '#c89b22') >= 4.5)
+  assert.ok(contrast('#000000', '#ffc107') >= 4.5)
 })
 
 test('Frizi Client notification enable buttons use canonical gold button class', () => {

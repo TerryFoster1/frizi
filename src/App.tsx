@@ -4108,7 +4108,7 @@ function HeroSearch({
               </span>
             </span>
             <ChevronDown
-              className={`text-[#a57712] transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
+              className={`text-[var(--frizi-gold)] transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
               size={20}
             />
           </button>
