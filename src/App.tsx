@@ -3518,16 +3518,40 @@ function SearchInputWithSuggestions({
 }) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
+  const [suggestionLimit, setSuggestionLimit] = useState(5);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
-  const visibleSuggestions = normalizedQuery
+  const matchingSuggestions = normalizedQuery
     ? searchSuggestionCategories.filter((suggestion) =>
         [suggestion.label, suggestion.query, ...suggestion.aliases].some(
           (term) => term.toLowerCase().includes(normalizedQuery),
         ),
       )
     : searchSuggestionCategories;
+  const visibleSuggestions = matchingSuggestions.slice(0, suggestionLimit);
   const suggestionsId = `${id}-suggestions`;
+
+  function updateSuggestionLimit() {
+    const viewportHeight =
+      window.visualViewport?.height || window.innerHeight || 720;
+    setSuggestionLimit(viewportHeight < 520 ? 3 : viewportHeight < 620 ? 4 : 5);
+  }
+
+  function scrollSearchIntoView() {
+    updateSuggestionLimit();
+    window.setTimeout(() => {
+      const element = containerRef.current;
+      if (!element) return;
+      const viewportOffset = window.visualViewport?.offsetTop || 0;
+      const headerOffset = 92;
+      const targetTop = viewportOffset + headerOffset;
+      const rect = element.getBoundingClientRect();
+      const delta = rect.top - targetTop;
+      if (Math.abs(delta) > 12) {
+        window.scrollBy({ top: delta, behavior: 'smooth' });
+      }
+    }, 80);
+  }
 
   useEffect(() => {
     function closeOnOutside(event: MouseEvent | TouchEvent) {
@@ -3546,6 +3570,18 @@ function SearchInputWithSuggestions({
       document.removeEventListener('touchstart', closeOnOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!suggestionsOpen) return;
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    viewport.addEventListener('resize', updateSuggestionLimit);
+    viewport.addEventListener('scroll', updateSuggestionLimit);
+    return () => {
+      viewport.removeEventListener('resize', updateSuggestionLimit);
+      viewport.removeEventListener('scroll', updateSuggestionLimit);
+    };
+  }, [suggestionsOpen]);
 
   function chooseSuggestion(nextQuery: string) {
     setQuery(nextQuery);
@@ -3572,7 +3608,10 @@ function SearchInputWithSuggestions({
             setSuggestionsOpen(true);
             setActiveSuggestionIndex(-1);
           }}
-          onFocus={() => setSuggestionsOpen(true)}
+          onFocus={() => {
+            setSuggestionsOpen(true);
+            scrollSearchIntoView();
+          }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') {
               event.preventDefault();
@@ -3615,7 +3654,7 @@ function SearchInputWithSuggestions({
       {suggestionsOpen ? (
         <div
           id={suggestionsId}
-          className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(18rem,45vh)] overflow-auto rounded-[22px] border border-black/10 bg-white p-2 text-[#151519] shadow-2xl shadow-black/35"
+          className="absolute left-0 right-0 top-[calc(100%+2px)] z-40 overflow-hidden rounded-xl border border-[#d9d9d9] bg-white text-[#151519] shadow-lg shadow-black/15"
           role="listbox"
         >
           {visibleSuggestions.length ? (
@@ -3623,11 +3662,11 @@ function SearchInputWithSuggestions({
               <button
                 key={suggestion.label}
                 aria-selected={activeSuggestionIndex === index}
-                className={`flex min-h-11 w-full items-center justify-between rounded-2xl px-3 text-left text-sm font-black ${
+                className={`flex min-h-11 w-full items-center px-4 text-left text-[15px] font-semibold text-[#151519] ${
                   activeSuggestionIndex === index
-                    ? 'bg-[#f4c430] text-black'
-                    : 'text-[#151519] hover:bg-[#f4c430]/12'
-                }`}
+                    ? 'bg-[#f5f5f5]'
+                    : 'bg-white hover:bg-[#f5f5f5]'
+                } ${index > 0 ? 'border-t border-[#eeeeee]' : ''}`}
                 role="option"
                 type="button"
                 onMouseEnter={() => setActiveSuggestionIndex(index)}
@@ -3635,7 +3674,6 @@ function SearchInputWithSuggestions({
                 onClick={() => chooseSuggestion(suggestion.query)}
               >
                 <span>{suggestion.label}</span>
-                <Search className="text-[#8f6a00]" size={15} />
               </button>
             ))
           ) : (

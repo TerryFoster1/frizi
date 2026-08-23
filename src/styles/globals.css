@@ -442,7 +442,7 @@ img {
 
 @media (max-width: 520px) {
   .friziClientHero {
-    min-height: 690px;
+    min-height: 570px;
   }
 
   .friziClientHeroImage {
@@ -466,21 +466,24 @@ img {
 
   .friziClientHeroCopy {
     justify-content: flex-start;
-    padding-top: 74px;
+    padding-top: 58px;
+    padding-bottom: 96px;
   }
 
   .friziClientHeroCopy h1 {
     max-width: 315px;
-    font-size: clamp(42px, 11vw, 48px);
+    font-size: clamp(38px, 10.5vw, 44px);
   }
 
   .friziClientHeroCopy p {
     max-width: 310px;
-    font-size: 20px;
+    margin-top: 18px;
+    font-size: 19px;
   }
 
   .friziClientSearchCard {
     width: min(358px, calc(100vw - 32px));
+    margin-top: -150px;
     margin-left: 16px;
     margin-right: auto;
   }
@@ -492,13 +495,14 @@ img {
 
   .friziClientHeroActions {
     gap: 12px;
+    margin-top: 24px;
   }
 
   .friziClientPrimaryCta,
   .friziClientSecondaryCta {
-    min-height: 58px;
-    padding: 0 24px;
-    font-size: 18px;
+    min-height: 54px;
+    padding: 0 22px;
+    font-size: 17px;
   }
 
   .friziWhyCard {
