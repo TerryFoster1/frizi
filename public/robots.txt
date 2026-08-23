@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /settings
+Disallow: /account
+Disallow: /admin
+Disallow: /*?
+
+Sitemap: https://frizi.ca/sitemap.xml

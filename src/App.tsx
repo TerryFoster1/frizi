@@ -18,10 +18,12 @@ import {
   Send,
   ShoppingBag,
   ShieldCheck,
+  Scissors,
   Sparkles,
   Star,
   Trash2,
   User,
+  UsersRound,
   X,
 } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -434,9 +436,9 @@ const accessibilityOptions = [
 
 const searchSuggestionCategories = [
   {
-    label: 'Hairstylist',
-    query: 'Hairstylist',
-    aliases: ['stylist', 'haircut', 'hair services', 'blowout', 'cut'],
+    label: 'Haircut',
+    query: 'Haircut',
+    aliases: ['cut', 'trim', 'hairstylist', 'stylist', 'hair services'],
   },
   {
     label: 'Barber',
@@ -462,34 +464,24 @@ const searchSuggestionCategories = [
     ],
   },
   {
-    label: 'Stylist',
-    query: 'Stylist',
-    aliases: ['hairstylist', 'hair professional', 'cut and style'],
+    label: 'Beard Trim',
+    query: 'Beard Trim',
+    aliases: ['beard', 'barbering', 'line up', 'grooming'],
   },
   {
-    label: 'Beard Grooming',
-    query: 'Beard Grooming',
-    aliases: ['beard', 'barbering', 'line up', 'trim'],
+    label: 'Blowout',
+    query: 'Blowout',
+    aliases: ['blow dry', 'style', 'styling'],
   },
   {
-    label: 'Manicure',
-    query: 'Manicure',
-    aliases: ['nails', 'gel nails', 'nail care'],
+    label: 'Balayage',
+    query: 'Balayage',
+    aliases: ['colour', 'color', 'highlights', 'colourist'],
   },
   {
-    label: 'Lashes',
-    query: 'Lashes',
-    aliases: ['lash extensions', 'lash lift'],
-  },
-  {
-    label: 'Brows',
-    query: 'Brows',
-    aliases: ['brow shaping', 'brow lamination'],
-  },
-  {
-    label: 'Extensions',
-    query: 'Extensions',
-    aliases: ['hair extensions', 'weave'],
+    label: 'Updo',
+    query: 'Updo',
+    aliases: ['formal styling', 'bridal hair', 'wedding hair'],
   },
   {
     label: 'Braids',
@@ -497,14 +489,24 @@ const searchSuggestionCategories = [
     aliases: ['protective styles', 'braiding'],
   },
   {
-    label: 'Curly Hair',
-    query: 'Curly Hair',
-    aliases: ['curls', 'curly cuts', 'texture'],
+    label: 'Extensions',
+    query: 'Extensions',
+    aliases: ['hair extensions', 'weave'],
   },
   {
-    label: 'Bridal Hair',
-    query: 'Bridal Hair',
-    aliases: ['wedding hair', 'updo', 'formal styling'],
+    label: 'Lashes',
+    query: 'Lashes',
+    aliases: ['lash extensions', 'lash lift'],
+  },
+  {
+    label: 'Manicure',
+    query: 'Manicure',
+    aliases: ['nails', 'gel nails', 'nail care'],
+  },
+  {
+    label: 'More services...',
+    query: 'Hair professional near me',
+    aliases: ['stylist', 'barber', 'colourist', 'lashes', 'manicure', 'brows'],
   },
 ] as const;
 
@@ -3596,7 +3598,7 @@ function SearchInputWithSuggestions({
               onSubmit();
             }
           }}
-          placeholder="I am looking for....."
+          placeholder="I am looking for..."
           role="combobox"
         />
         <button
@@ -3687,110 +3689,161 @@ function HeroSearch({
   }
 
   return (
-    <section className="clientMediaSurface relative h-[100svh] overflow-hidden pt-20">
-      <img
-        className="absolute inset-0 h-full w-full object-cover"
-        src="https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1800&q=85"
-        alt=""
-      />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/44 to-[#080808]" />
-      <div className="relative mx-auto flex h-full max-w-6xl flex-col justify-end px-4 pb-28 sm:px-6 lg:px-8">
-        <div className="max-w-3xl">
-          <h1 className="text-5xl font-black leading-[0.95] tracking-normal sm:text-7xl">
-            Find your style
-          </h1>
-          <p className="mt-5 max-w-2xl text-lg font-semibold leading-8 text-white/76">
-            Search for the right stylist, barber, or colour professional, then
-            keep your haircut photos, preferences, and appointment history
-            together.
-          </p>
-          <div className="mt-7 rounded-[28px] border border-white/12 bg-black/58 p-3 shadow-2xl shadow-black/50 backdrop-blur">
-            <label className="sr-only" htmlFor="frizi-search">
-              Search for a hair professional
-            </label>
-            <SearchInputWithSuggestions
-              id="frizi-search"
-              isListening={isListening}
-              onMic={onMic}
-              onSubmit={onSubmit}
-              query={query}
-              setQuery={setQuery}
-              voiceMessage={voiceMessage}
-            />
+    <section className="friziClientHome pt-[72px]">
+      <div className="friziClientHero">
+        <img
+          className="friziClientHeroImage"
+          src="/frizi-client-hero-salon.png"
+          alt=""
+        />
+        <div className="friziClientHeroCopy">
+          <h1>Great Hair Starts With The Right Professional</h1>
+          <p>Find a hair pro who gets your style and stay connected</p>
+          <div className="friziClientHeroActions">
             <button
-              className="mt-3 min-h-12 w-full rounded-2xl bg-[#f4c430] px-5 font-black text-black"
+              className="friziClientPrimaryCta"
               type="button"
-              onClick={() => onSubmit()}
+              onClick={() => document.getElementById('frizi-search')?.focus()}
             >
-              Search
+              Find a pro
             </button>
-            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04]">
-              <button
-                className="flex min-h-12 w-full items-center justify-between gap-3 px-4 text-left"
-                type="button"
-                onClick={() => setFiltersOpen((current) => !current)}
-              >
-                <span>
-                  <span className="block text-sm font-black text-white">
-                    Filters
-                  </span>
-                  <span className="block text-xs font-semibold text-white/52">
-                    Within {filters.distanceKm} km of your current location
-                  </span>
-                </span>
-                <ChevronDown
-                  className={`text-[#f4c430] transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
-                  size={20}
-                />
-              </button>
-              {filtersOpen ? (
-                <div className="grid gap-3 border-t border-white/10 p-4 sm:grid-cols-2">
-                  <label className="grid gap-2 text-sm font-black text-white">
-                    Distance
-                    <select
-                      className="h-12 rounded-2xl border border-white/10 bg-[#101014] px-3 font-semibold text-white outline-none"
-                      value={filters.distanceKm}
-                      onChange={(event) =>
-                        updateFilter('distanceKm', Number(event.target.value))
-                      }
-                    >
-                      {[2, 5, 10, 25].map((distance) => (
-                        <option key={distance} value={distance}>
-                          Within {distance} km
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <FilterSelect
-                    label="Service"
-                    options={serviceTypeOptions}
-                    value={filters.serviceType}
-                    onChange={(value) => updateFilter('serviceType', value)}
-                  />
-                  <FilterSelect
-                    label="Specialty"
-                    options={specialtyOptions}
-                    value={filters.specialty}
-                    onChange={(value) => updateFilter('specialty', value)}
-                  />
-                  <FilterSelect
-                    label="Comfort"
-                    options={accessibilityOptions}
-                    value={filters.accessibility}
-                    onChange={(value) => updateFilter('accessibility', value)}
-                  />
-                </div>
-              ) : null}
-            </div>
-            {hasSearched ? (
-              <p className="mt-3 rounded-2xl bg-black/30 px-3 py-2 text-sm font-bold text-white/68">
-                {resultCount} local {resultCount === 1 ? 'match' : 'matches'}{' '}
-                near your current location.
-              </p>
-            ) : null}
+            <a className="friziClientSecondaryCta" href="/learn">
+              Learn more
+            </a>
           </div>
         </div>
       </div>
+      <div className="friziClientSearchCard">
+        <label className="sr-only" htmlFor="frizi-search">
+          Search for a hair professional
+        </label>
+        <SearchInputWithSuggestions
+          id="frizi-search"
+          isListening={isListening}
+          onMic={onMic}
+          onSubmit={onSubmit}
+          query={query}
+          setQuery={setQuery}
+          voiceMessage={voiceMessage}
+        />
+        <div className="mt-3 rounded-2xl border border-black/10 bg-white">
+          <button
+            className="flex min-h-12 w-full items-center justify-between gap-3 px-4 text-left text-[#17130c]"
+            type="button"
+            onClick={() => setFiltersOpen((current) => !current)}
+          >
+            <span>
+              <span className="block text-sm font-black">Filters</span>
+              <span className="block text-xs font-semibold text-[#6f665d]">
+                Within {filters.distanceKm} km of your current location
+              </span>
+            </span>
+            <ChevronDown
+              className={`text-[#a57712] transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
+              size={20}
+            />
+          </button>
+          {filtersOpen ? (
+            <div className="grid gap-3 border-t border-black/10 p-4 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-black text-[#17130c]">
+                Distance
+                <select
+                  className="h-12 rounded-2xl border border-black/10 bg-white px-3 font-semibold text-[#17130c] outline-none"
+                  value={filters.distanceKm}
+                  onChange={(event) =>
+                    updateFilter('distanceKm', Number(event.target.value))
+                  }
+                >
+                  {[2, 5, 10, 25].map((distance) => (
+                    <option key={distance} value={distance}>
+                      Within {distance} km
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <FilterSelect
+                label="Service"
+                options={serviceTypeOptions}
+                value={filters.serviceType}
+                onChange={(value) => updateFilter('serviceType', value)}
+              />
+              <FilterSelect
+                label="Specialty"
+                options={specialtyOptions}
+                value={filters.specialty}
+                onChange={(value) => updateFilter('specialty', value)}
+              />
+              <FilterSelect
+                label="Comfort"
+                options={accessibilityOptions}
+                value={filters.accessibility}
+                onChange={(value) => updateFilter('accessibility', value)}
+              />
+            </div>
+          ) : null}
+        </div>
+        {hasSearched ? (
+          <p className="mt-3 rounded-2xl bg-[#17130c]/8 px-3 py-2 text-sm font-bold text-[#6f665d]">
+            {resultCount} local {resultCount === 1 ? 'match' : 'matches'} near
+            your current location.
+          </p>
+        ) : null}
+      </div>
+      <WhyFriziSection />
+    </section>
+  );
+}
+
+const whyFriziCards = [
+  {
+    icon: UsersRound,
+    title: 'Find a pro who fits your style',
+    description:
+      'Search local hair professionals by style, services, or your specific needs. Find the right fit and never lose them.',
+  },
+  {
+    icon: CalendarDays,
+    title: 'Book directly with your professional',
+    description:
+      'Make sure you get the pro you want. See their availability, choose a time, and book directly online.',
+  },
+  {
+    icon: MessageCircle,
+    title: 'Message your pro directly',
+    description:
+      'Move or cancel appointments, get product and hair advice, and receive exclusive offers-all directly from your pro.',
+  },
+  {
+    icon: Scissors,
+    title: 'Never explain your style again',
+    description:
+      "Build your hair profile together so your pro knows your hair, your preferences, and how you like it before you're in the chair.",
+  },
+] as const;
+
+function WhyFriziSection() {
+  return (
+    <section className="friziWhySection" aria-labelledby="why-frizi-title">
+      <h2 id="why-frizi-title">Why Frizi?</h2>
+      <div className="friziWhyList">
+        {whyFriziCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <article className="friziWhyCard" key={card.title}>
+              <div className="friziWhyIcon" aria-hidden="true">
+                <Icon size={30} strokeWidth={2.4} />
+              </div>
+              <div className="friziWhyContent">
+                <h3>{card.title}</h3>
+                <p>{card.description}</p>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      <a className="friziWhyLearnMore" href="/learn">
+        Learn more
+      </a>
     </section>
   );
 }
@@ -3807,10 +3860,10 @@ function FilterSelect({
   value: string;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-black text-white">
+    <label className="grid gap-2 text-sm font-black text-[#17130c]">
       {label}
       <select
-        className="h-12 rounded-2xl border border-white/10 bg-[#101014] px-3 font-semibold text-white outline-none"
+        className="h-12 rounded-2xl border border-black/10 bg-white px-3 font-semibold text-[#17130c] outline-none"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -5006,10 +5059,16 @@ function ClientPushPermissionPrompt() {
         {message ? <em className="mt-1 block text-xs font-bold text-[#f4c430]">{message}</em> : null}
       </div>
       <div className="col-span-2 grid gap-2 sm:col-start-2 sm:col-end-3 sm:grid-cols-2">
+        {/* prettier-ignore */}
         <button className="friziGoldButton min-h-11 rounded-2xl px-4 py-3 text-sm font-black" type="button" disabled={enabling} onClick={() => void enable()}>
           {enabling ? 'Enabling...' : 'Enable notifications'}
         </button>
-        <button className="min-h-11 rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-3 text-sm font-black text-white" type="button" disabled={enabling} onClick={dismiss}>
+        <button
+          className="min-h-11 rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-3 text-sm font-black text-white"
+          type="button"
+          disabled={enabling}
+          onClick={dismiss}
+        >
           Not now
         </button>
       </div>
@@ -5829,12 +5888,8 @@ function ClientSettingsPanel({
               </span>
             </div>
             {!pushEnabled && pushSupportedLabel && pushPermission !== 'denied' ? (
-              <button
-                className="friziGoldButton mt-3 min-h-11 w-full rounded-2xl px-4 text-sm font-black"
-                type="button"
-                disabled={pushBusy}
-                onClick={() => void enablePushFromSettings()}
-              >
+              /* prettier-ignore */
+              <button className="friziGoldButton mt-3 min-h-11 w-full rounded-2xl px-4 text-sm font-black" type="button" disabled={pushBusy} onClick={() => void enablePushFromSettings()}>
                 {pushBusy ? 'Enabling...' : 'Enable push notifications'}
               </button>
             ) : null}
