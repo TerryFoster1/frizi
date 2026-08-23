@@ -10,6 +10,26 @@ function sendJson(response: ServerResponse, status: number, payload: unknown) {
   response.end(JSON.stringify(payload));
 }
 
+function publicPromotionPayload(promotion: Record<string, any> | null) {
+  if (!promotion) return null;
+  if (!promotion.active || promotion.requires_code || promotion.archived_at) return null;
+  if (promotion.end_at && new Date(promotion.end_at).getTime() < Date.now()) return null;
+  if (!promotion.new_clients_only && !promotion.first_appointment_only) return null;
+  const headline = String(promotion.client_headline || promotion.name || '').trim();
+  const description = String(promotion.public_description || '').trim();
+  if (!headline || !description) return null;
+  return {
+    id: promotion.id,
+    headline,
+    description,
+    discountType: promotion.discount_type,
+    discountValue: Number(promotion.discount_value || 0),
+    endAt: promotion.end_at || '',
+    newClientsOnly: Boolean(promotion.new_clients_only),
+    firstAppointmentOnly: Boolean(promotion.first_appointment_only),
+  };
+}
+
 function publicProfessionalPayload(professional: Record<string, any>, services: Array<Record<string, any>>, promotion: Record<string, any> | null) {
   const location = professional.location && typeof professional.location === 'object' ? professional.location : {};
   const publicServices = services.map((service) => ({
@@ -41,7 +61,7 @@ function publicProfessionalPayload(professional: Record<string, any>, services: 
     services: publicServices,
     bookingSlots: ['Choose a date'],
     clientReviews: [],
-    promotion: promotion?.name || '',
+    promotion: publicPromotionPayload(promotion),
   };
 }
 
@@ -96,15 +116,19 @@ export default async function handler(request: IncomingMessage, response: Server
         .order('display_order', { ascending: true }),
       supabase
         .from('frizi_promotions')
-        .select('id, name, public_description, active, start_at, end_at')
+        .select('id, name, client_headline, public_description, discount_type, discount_value, active, start_at, end_at, first_appointment_only, new_clients_only, requires_code, archived_at')
         .eq('created_by', String(invite.professional_id))
         .eq('active', true)
+        .eq('requires_code', false)
         .order('updated_at', { ascending: false })
-        .limit(1),
+        .limit(8),
     ]);
 
     if (servicesError) throw servicesError;
     if (promotionsError) throw promotionsError;
+
+    const publicPromotion =
+      (promotions || []).find((promotion) => publicPromotionPayload(promotion));
 
     return sendJson(response, 200, {
       invitation: {
@@ -113,7 +137,7 @@ export default async function handler(request: IncomingMessage, response: Server
         source: invite.source,
         expiresAt: invite.expires_at,
       },
-      professional: publicProfessionalPayload(professional, services || [], promotions?.[0] || null),
+      professional: publicProfessionalPayload(professional, services || [], publicPromotion || null),
     });
   } catch (error) {
     return sendJson(response, 500, {

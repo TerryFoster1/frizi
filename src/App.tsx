@@ -66,6 +66,17 @@ type Review = {
   rating: number;
 };
 
+type PublicPromotion = {
+  id: string;
+  headline: string;
+  description: string;
+  discountType: string;
+  discountValue: number;
+  endAt: string;
+  newClientsOnly: boolean;
+  firstAppointmentOnly: boolean;
+};
+
 type Professional = {
   id: string;
   name: string;
@@ -89,7 +100,7 @@ type Professional = {
   bookingSlotsByService?: Record<string, string[]>;
   bookingSettings?: Record<string, unknown> | null;
   clientReviews: Review[];
-  promotion: string;
+  promotion: PublicPromotion | null;
 };
 
 type BookingRequest = {
@@ -213,6 +224,7 @@ const clientSessionStorageKey = 'frizi-client-session';
 const pendingBookingStorageKey = 'frizi-client-pending-booking';
 const clientOAuthContextStorageKey = 'frizi-client-oauth-context';
 const pendingInviteStorageKey = 'frizi-client-pending-invite';
+const pendingSaveProfessionalStorageKey = 'frizi-client-pending-save-professional';
 const locationPromptStorageKey = 'frizi-client-location-prompt-complete';
 
 type ClientNavKey =
@@ -561,6 +573,22 @@ type LiveServiceRow = {
   service_metadata: Record<string, unknown> | null;
 };
 
+type LivePromotionRow = {
+  id: string;
+  created_by: string;
+  name: string;
+  client_headline: string | null;
+  public_description: string | null;
+  discount_type: string;
+  discount_value: number;
+  end_at: string | null;
+  active: boolean;
+  first_appointment_only: boolean;
+  new_clients_only: boolean;
+  requires_code: boolean;
+  archived_at?: string | null;
+};
+
 function formatServicePrice(service: LiveServiceRow) {
   if (service.pricing_type === 'free_consultation') return 'Free';
   if (service.pricing_type === 'price_varies') return 'Varies';
@@ -666,6 +694,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
   const [
     { data: locations, error: locationError },
     { data: services, error: serviceError },
+    { data: promotions, error: promotionError },
   ] = await Promise.all([
     supabase
       .from('frizi_professional_locations')
@@ -684,10 +713,20 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
       .eq('new_clients_allowed', true)
       .eq('existing_clients_only', false)
       .order('display_order', { ascending: true }),
+    supabase
+      .from('frizi_promotions')
+      .select(
+        'id, created_by, name, client_headline, public_description, discount_type, discount_value, end_at, active, first_appointment_only, new_clients_only, requires_code, archived_at',
+      )
+      .in('created_by', ids)
+      .eq('active', true)
+      .eq('requires_code', false)
+      .order('updated_at', { ascending: false }),
   ]);
 
   if (locationError) throw locationError;
   if (serviceError) throw serviceError;
+  if (promotionError) throw promotionError;
 
   return (liveProfiles as LiveProfessionalRow[]).flatMap(
     (profile): Professional[] => {
@@ -697,6 +736,11 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
       const profileServices = (
         (services as LiveServiceRow[] | null) || []
       ).filter((service) => service.professional_id === profile.id);
+      const publicPromotion =
+        ((promotions as LivePromotionRow[] | null) || [])
+          .filter((promotion) => promotion.created_by === profile.id)
+          .map(publicPromotionFromRow)
+          .find(Boolean) || null;
       const specialties = profile.specialties?.length
         ? profile.specialties
         : [profile.primary_specialty || 'Hair services'];
@@ -755,7 +799,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
           bookingSlots,
           bookingSettings: profile.booking_settings,
           clientReviews: [],
-          promotion: '',
+          promotion: publicPromotion,
         },
       ];
     },
@@ -779,6 +823,26 @@ function paymentRequirementForService(service: LiveServiceRow) {
   if (service.deposit_type && service.deposit_type !== 'none')
     return 'deposit_required';
   return 'pay_at_appointment';
+}
+
+function publicPromotionFromRow(row: LivePromotionRow): PublicPromotion | null {
+  const headline = String(row.client_headline || row.name || '').trim();
+  const description = String(row.public_description || '').trim();
+  if (!headline || !description) return null;
+  if (!row.active || row.requires_code || row.archived_at) return null;
+  if (row.end_at && new Date(row.end_at).getTime() < Date.now()) return null;
+  if (!row.new_clients_only && !row.first_appointment_only) return null;
+
+  return {
+    id: row.id,
+    headline,
+    description,
+    discountType: row.discount_type,
+    discountValue: Number(row.discount_value || 0),
+    endAt: row.end_at || '',
+    newClientsOnly: Boolean(row.new_clients_only),
+    firstAppointmentOnly: Boolean(row.first_appointment_only),
+  };
 }
 
 type AvailabilityShiftLike = {
@@ -1108,6 +1172,9 @@ function App() {
   const [locationPromptOpen, setLocationPromptOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [saveProPromptProfile, setSaveProPromptProfile] =
+    useState<Professional | null>(null);
+  const [savingProfessionalId, setSavingProfessionalId] = useState('');
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [clientNotifications, setClientNotifications] = useState<
     ClientNotification[]
@@ -1162,6 +1229,7 @@ function App() {
           void loadClientAppointments(session);
           void loadClientNotifications();
           void loadClientConversations(session);
+          void savePendingProfessional(session);
           if (authContext?.intent === 'promo') {
             setOpenBookingAfterAuth(true);
           } else if (authContext?.intent === 'invite') {
@@ -1358,6 +1426,7 @@ function App() {
     void loadClientAppointments(session);
     void loadClientNotifications();
     void loadClientConversations(session);
+    void savePendingProfessional(session);
     if (authIntent === 'invite') {
       setAuthIntent('default');
       return;
@@ -1399,6 +1468,7 @@ function App() {
     window.localStorage.removeItem(clientSessionStorageKey);
     window.localStorage.removeItem(pendingBookingStorageKey);
     window.localStorage.removeItem(pendingInviteStorageKey);
+    window.localStorage.removeItem(pendingSaveProfessionalStorageKey);
     window.sessionStorage.removeItem(clientOAuthContextStorageKey);
     setClientSession(null);
     setClientAppointments([]);
@@ -1468,6 +1538,14 @@ function App() {
         : [];
       setClientAppointments(appointments);
       setConnectedProfessionals(professionals);
+      setSavedIds((current) =>
+        Array.from(
+          new Set([
+            ...current,
+            ...professionals.map((professional) => professional.id),
+          ]),
+        ),
+      );
       const nextAppointment = appointments.find(
         (appointment) =>
           !isAppointmentPast(appointment) &&
@@ -1481,6 +1559,91 @@ function App() {
         error instanceof Error ? error.message : error,
       );
     }
+  }
+
+  function profileIsSaved(profile: Professional) {
+    const professionalId = normalizeClientProfessionalId(profile.id);
+    return (
+      savedIds.some((id) => normalizeClientProfessionalId(id) === professionalId) ||
+      connectedProfessionals.some(
+        (professional) =>
+          normalizeClientProfessionalId(professional.id) === professionalId,
+      )
+    );
+  }
+
+  async function saveProfessional(profile: Professional, session = clientSession) {
+    const professionalId = normalizeClientProfessionalId(profile.id);
+    if (!session?.accessToken) {
+      window.localStorage.setItem(
+        pendingSaveProfessionalStorageKey,
+        professionalId,
+      );
+      setSaveProPromptProfile(profile);
+      return;
+    }
+
+    setSavingProfessionalId(professionalId);
+    try {
+      const response = await fetch('/api/save-professional', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ professionalId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(payload.error || 'This professional could not be saved.');
+      setSavedIds((current) =>
+        current.some((id) => normalizeClientProfessionalId(id) === professionalId)
+          ? current
+          : [...current, profile.id],
+      );
+      window.localStorage.removeItem(pendingSaveProfessionalStorageKey);
+      void loadClientAppointments(session);
+    } catch (error) {
+      console.warn(
+        '[frizi-client-save-professional]',
+        error instanceof Error ? error.message : error,
+      );
+    } finally {
+      setSavingProfessionalId('');
+    }
+  }
+
+  async function savePendingProfessional(session: ClientSession) {
+    const professionalId = window.localStorage.getItem(
+      pendingSaveProfessionalStorageKey,
+    );
+    if (!professionalId) return;
+    await saveProfessional(
+      {
+        id: `live-${professionalId}`,
+        name: 'Saved professional',
+        role: '',
+        studio: '',
+        neighborhood: '',
+        distance: '',
+        heroImage: '',
+        detailImage: '',
+        rating: 0,
+        reviews: 0,
+        repeatRate: '',
+        nextAvailable: '',
+        specialties: [],
+        accommodations: [],
+        searchTerms: [],
+        whyMatch: '',
+        bio: '',
+        services: [],
+        bookingSlots: [],
+        clientReviews: [],
+        promotion: null,
+      },
+      session,
+    );
   }
 
   async function loadClientConversations(session = clientSession) {
@@ -1777,14 +1940,6 @@ function App() {
         : (current - 1 + rankedProfiles.length) % rankedProfiles.length,
     );
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function toggleSaved(profileId: string) {
-    setSavedIds((current) =>
-      current.includes(profileId)
-        ? current.filter((id) => id !== profileId)
-        : [...current, profileId],
-    );
   }
 
   function startBooking(profile: Professional) {
@@ -2096,16 +2251,12 @@ function App() {
                 <DeckCard
                   activeIndex={activeIndex}
                   isListening={isListening}
-                  isSaved={savedIds.includes(activeProfile.id)}
+                  isSaved={profileIsSaved(activeProfile)}
                   onMic={startVoiceSearch}
                   onNext={() => moveDeck('next')}
                   onSearch={submitSearch}
                   onPrevious={() => moveDeck('previous')}
-                  onToggleSaved={() =>
-                    clientSession
-                      ? toggleSaved(activeProfile.id)
-                      : openClientAuth('my-pros')
-                  }
+                  onToggleSaved={() => void saveProfessional(activeProfile)}
                   profile={activeProfile}
                   query={query}
                   setQuery={setQuery}
@@ -2120,6 +2271,14 @@ function App() {
                   clientSession={clientSession}
                   isClientSignedIn={Boolean(clientSession)}
                   onBook={confirmBooking}
+                  onSaveProfessional={() =>
+                    void saveProfessional(activeProfile)
+                  }
+                  isSaved={profileIsSaved(activeProfile)}
+                  saveBusy={
+                    savingProfessionalId ===
+                    normalizeClientProfessionalId(activeProfile.id)
+                  }
                   onPromoSignupRequired={() => openClientAuth('promo')}
                   openBookingAfterAuth={openBookingAfterAuth}
                   profile={activeProfile}
@@ -2156,6 +2315,20 @@ function App() {
         <ClientDeleteAccountModal
           onClose={() => setDeleteAccountOpen(false)}
           onDelete={deleteClientAccount}
+        />
+      ) : null}
+      {saveProPromptProfile ? (
+        <SaveProAuthPrompt
+          onClose={() => setSaveProPromptProfile(null)}
+          onCreateAccount={() => {
+            setSaveProPromptProfile(null);
+            openClientAuth('my-pros', 'signup');
+          }}
+          onSignIn={() => {
+            setSaveProPromptProfile(null);
+            openClientAuth('my-pros', 'signin');
+          }}
+          profile={saveProPromptProfile}
         />
       ) : null}
       {locationPromptOpen ? (
@@ -2710,6 +2883,79 @@ function InviteLanding({
         </section>
       </section>
     </main>
+  );
+}
+
+function SaveProAuthPrompt({
+  onClose,
+  onCreateAccount,
+  onSignIn,
+  profile,
+}: {
+  onClose: () => void;
+  onCreateAccount: () => void;
+  onSignIn: () => void;
+  profile: Professional;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-end bg-black/70 p-3 sm:items-center sm:justify-center"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        aria-labelledby="save-pro-auth-title"
+        aria-modal="true"
+        className="w-full rounded-[28px] border border-white/10 bg-[#151519] p-5 text-white shadow-2xl sm:max-w-md"
+        role="dialog"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black text-[#f4c430]">Save this Pro</p>
+            <h2 id="save-pro-auth-title" className="mt-1 text-2xl font-black">
+              Keep {profile.name} in My Pros
+            </h2>
+          </div>
+          <button
+            aria-label="Close save professional prompt"
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/[0.06]"
+            type="button"
+            onClick={onClose}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <p className="mt-4 leading-7 text-white/70">
+          Create a free Frizi account so you can find them again, book
+          appointments and stay connected.
+        </p>
+        <div className="mt-5 space-y-3">
+          <button
+            className="flex min-h-14 w-full items-center justify-center rounded-2xl bg-[#f4c430] px-5 font-black text-black"
+            type="button"
+            onClick={onCreateAccount}
+          >
+            Create free account
+          </button>
+          <button
+            className="flex min-h-14 w-full items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] px-5 font-black text-white"
+            type="button"
+            onClick={onCreateAccount}
+          >
+            Continue with Google
+          </button>
+          <button
+            className="flex min-h-12 w-full items-center justify-center rounded-2xl px-5 font-black text-[#f4c430]"
+            type="button"
+            onClick={onSignIn}
+          >
+            Sign in
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -4195,7 +4441,7 @@ function DeckCard({
           <button
             aria-label={
               isSaved
-                ? `Remove ${profile.name} from saved`
+                ? `${profile.name} is saved`
                 : `Save ${profile.name}`
             }
             className={`grid h-12 w-12 place-items-center rounded-full border backdrop-blur ${
@@ -4236,12 +4482,15 @@ function ProfileDetails({
   booking,
   bookingError,
   clientSession,
+  isSaved,
   isClientSignedIn,
   onBook,
   onBookingAfterAuthHandled,
   onPromoSignupRequired,
+  onSaveProfessional,
   openBookingAfterAuth,
   profile,
+  saveBusy,
   selectedService,
   selectedTime,
   setSelectedService,
@@ -4250,12 +4499,15 @@ function ProfileDetails({
   booking: BookingRequest | null;
   bookingError: string;
   clientSession: ClientSession | null;
+  isSaved: boolean;
   isClientSignedIn: boolean;
   onBook: () => void;
   onBookingAfterAuthHandled: () => void;
   onPromoSignupRequired: () => void;
+  onSaveProfessional: () => void;
   openBookingAfterAuth: boolean;
   profile: Professional;
+  saveBusy: boolean;
   selectedService: string;
   selectedTime: string;
   setSelectedService: (value: string) => void;
@@ -4317,55 +4569,84 @@ function ProfileDetails({
   return (
     <section className="min-h-screen bg-[#080808] pb-28" id="booking">
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-5 sm:px-6">
-        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <div className="flex items-start gap-4">
+        <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#151519]">
+          <div className="relative h-56">
+            <img
+              alt=""
+              className="h-full w-full object-cover"
+              src={profile.heroImage}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#151519] via-black/25 to-black/10" />
+          </div>
+          <div className="relative px-5 pb-5">
             <img
               alt={`${profile.name} profile`}
-              className="h-24 w-24 rounded-3xl object-cover"
+              className="-mt-14 h-28 w-28 rounded-full border-4 border-[#151519] object-cover ring-2 ring-[#f4c430]"
               src={profile.detailImage}
             />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-black text-[#f4c430]">
-                {profile.studio}
-              </p>
-              <h3 className="mt-1 text-2xl font-black">{profile.name}</h3>
-              <p className="mt-2 text-sm font-semibold leading-6 text-white/64">
-                {profile.role} in {profile.neighborhood}
-              </p>
-            </div>
+            <p className="mt-3 text-sm font-black text-[#f4c430]">
+              {profile.studio}
+            </p>
+            <h3 className="mt-1 text-3xl font-black">{profile.name}</h3>
+            <p className="mt-2 text-sm font-semibold leading-6 text-white/64">
+              {profile.role} in {profile.neighborhood}
+            </p>
+            <p className="mt-5 text-base leading-7 text-white/72">
+              {profile.bio}
+            </p>
           </div>
-          <p className="mt-5 text-base leading-7 text-white/72">
-            {profile.bio}
-          </p>
         </div>
 
-        <div className="rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-          <p className="text-lg font-black text-[#f4c430]">
-            {profile.promotion}
-          </p>
-          <p className="mt-2 text-sm font-semibold leading-6 text-white/68">
-            Promo applies only when booked and purchased through the app.
-          </p>
+        <div className="grid gap-3 sm:grid-cols-2">
           <button
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black"
-            type="button"
-            onClick={applyPromotion}
-          >
-            <Send size={18} />
-            Apply Promotion
-          </button>
-        </div>
-
-        <div className="rounded-2xl border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-          <button
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 py-4 text-base font-black text-black"
+            className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 text-base font-black text-black"
             type="button"
             onClick={() => setBookingOpen(true)}
           >
             <CalendarDays size={20} />
             Book an appointment
           </button>
+          <button
+            className={`flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border px-4 text-base font-black ${
+              isSaved
+                ? 'border-[#f4c430] bg-[#f4c430]/12 text-[#f4c430]'
+                : 'border-white/15 bg-white/[0.06] text-white'
+            }`}
+            type="button"
+            disabled={saveBusy || isSaved}
+            onClick={onSaveProfessional}
+          >
+            <Star size={20} fill={isSaved ? 'currentColor' : 'none'} />
+            {saveBusy ? 'Saving...' : isSaved ? 'Saved' : 'Save Pro'}
+          </button>
         </div>
+
+        {profile.promotion ? (
+          <div className="rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#f4c430]">
+              New client offer
+            </p>
+            <p className="mt-2 text-lg font-black text-white">
+              {profile.promotion.headline}
+            </p>
+            <p className="mt-2 text-sm font-semibold leading-6 text-white/68">
+              {profile.promotion.description}
+            </p>
+            {profile.promotion.endAt ? (
+              <p className="mt-2 text-xs font-bold text-white/52">
+                Ends {formatPromoDate(profile.promotion.endAt)}
+              </p>
+            ) : null}
+            <button
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 font-black text-black"
+              type="button"
+              onClick={applyPromotion}
+            >
+              <Send size={18} />
+              Book with offer
+            </button>
+          </div>
+        ) : null}
 
         <button
           className="inline-flex items-center gap-2 px-1 py-2 text-sm font-black text-[#f4c430]"
@@ -5314,10 +5595,12 @@ function AppointmentsPanel({
         <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
           <Search className="text-[#f4c430]" size={28} />
           <h2 className="mt-3 text-2xl font-black">
-            Find your next appointment
+            Sign up for free to track your appointments and get reminders
           </h2>
           <p className="mt-2 leading-7 text-white/68">
-            Search for a local hair professional to book an appointment.
+            You can still search and book without a paid account. A free Frizi
+            profile keeps your appointments, reminders, and professionals in
+            one place.
           </p>
           <div className="mt-4">
             <SearchInputWithSuggestions
@@ -5387,7 +5670,7 @@ function AppointmentsPanel({
       </section>
 
       <section className="rounded-[24px] border border-white/10 bg-[#151519] p-4">
-        <h2 className="text-xl font-black">Past</h2>
+        <h2 className="text-xl font-black">History</h2>
         {pastAppointments.length ? (
           <div className="mt-3 space-y-3">
             {pastAppointments.map((appointment) => (
@@ -5401,7 +5684,7 @@ function AppointmentsPanel({
           </div>
         ) : (
           <p className="mt-2 text-sm font-semibold text-white/58">
-            No past appointments yet.
+            No appointment history yet.
           </p>
         )}
       </section>
@@ -7808,6 +8091,10 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
       service.paymentRequirement || 'pay_at_appointment',
     ),
   }));
+  const promotion =
+    profile.promotion && typeof profile.promotion === 'object'
+      ? (profile.promotion as Record<string, unknown>)
+      : null;
   return {
     id: String(profile.id || ''),
     name: String(profile.name || 'Professional'),
@@ -7857,7 +8144,18 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
         ? (profile.bookingSettings as Record<string, unknown>)
         : null,
     clientReviews: [],
-    promotion: String(profile.promotion || ''),
+    promotion: promotion
+      ? {
+          id: String(promotion.id || ''),
+          headline: String(promotion.headline || ''),
+          description: String(promotion.description || ''),
+          discountType: String(promotion.discountType || ''),
+          discountValue: Number(promotion.discountValue || 0),
+          endAt: String(promotion.endAt || ''),
+          newClientsOnly: Boolean(promotion.newClientsOnly),
+          firstAppointmentOnly: Boolean(promotion.firstAppointmentOnly),
+        }
+      : null,
   };
 }
 
@@ -7877,6 +8175,15 @@ function formatCurrency(cents: number) {
     style: 'currency',
     currency: 'CAD',
   }).format(cents / 100);
+}
+
+function formatPromoDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-CA', {
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 function buildAvailabilityDays(slots: string[]) {

@@ -584,7 +584,7 @@ async function loadConnectedProfessionals(
         bookingSlotsByService,
         bookingSettings: professional.booking_settings || null,
         clientReviews: [],
-        promotion: '',
+        promotion: null,
       };
     });
 }
