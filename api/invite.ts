@@ -25,6 +25,7 @@ function publicPromotionPayload(promotion: Record<string, any> | null) {
     description,
     discountType: promotion.discount_type,
     discountValue: Number(promotion.discount_value || 0),
+    imageUrl: promotion.image_url || '/frizi-client-hero-salon.png',
     endAt: promotion.end_at || '',
     newClientsOnly: Boolean(promotion.new_clients_only),
     firstAppointmentOnly: Boolean(promotion.first_appointment_only),
@@ -117,7 +118,7 @@ export default async function handler(request: IncomingMessage, response: Server
         .order('display_order', { ascending: true }),
       supabase
         .from('frizi_promotions')
-        .select('id, name, client_headline, public_description, discount_type, discount_value, active, start_at, end_at, first_appointment_only, new_clients_only, show_on_profile, is_featured_profile_offer, requires_code, archived_at')
+        .select('id, name, client_headline, public_description, discount_type, discount_value, image_url, active, start_at, end_at, first_appointment_only, new_clients_only, show_on_profile, is_featured_profile_offer, requires_code, archived_at')
         .eq('created_by', String(invite.professional_id))
         .eq('active', true)
         .eq('show_on_profile', true)

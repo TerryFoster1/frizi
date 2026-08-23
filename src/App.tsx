@@ -48,6 +48,8 @@ import {
   type PushSubscriptionStatus,
 } from './lib/pushNotifications';
 
+const FRIZI_PROMO_FALLBACK_IMAGE = '/frizi-client-hero-salon.png';
+
 type Service = {
   id?: string;
   name: string;
@@ -72,6 +74,7 @@ type PublicPromotion = {
   description: string;
   discountType: string;
   discountValue: number;
+  imageUrl: string;
   endAt: string;
   newClientsOnly: boolean;
   firstAppointmentOnly: boolean;
@@ -283,7 +286,28 @@ type ClientConversation = {
   avatarFallback: string;
   latestMessage: string;
   latestMessageAt: string;
+  messages: ClientConversationMessage[];
   unreadCount: number;
+};
+
+type ClientConversationMessage = {
+  id: string;
+  body: string;
+  createdAt: string;
+  isFromProfessional: boolean;
+  messageType: string;
+  promotion: ClientPromoMessage | null;
+};
+
+type ClientPromoMessage = {
+  id: string;
+  headline: string;
+  description: string;
+  discountType: string;
+  discountValue: number;
+  imageUrl: string;
+  endAt: string;
+  expired: boolean;
 };
 
 type ClientPassport = {
@@ -581,6 +605,7 @@ type LivePromotionRow = {
   public_description: string | null;
   discount_type: string;
   discount_value: number;
+  image_url: string | null;
   end_at: string | null;
   active: boolean;
   first_appointment_only: boolean;
@@ -718,7 +743,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
     supabase
       .from('frizi_promotions')
       .select(
-        'id, created_by, name, client_headline, public_description, discount_type, discount_value, end_at, active, first_appointment_only, new_clients_only, show_on_profile, is_featured_profile_offer, requires_code, archived_at',
+        'id, created_by, name, client_headline, public_description, discount_type, discount_value, image_url, end_at, active, first_appointment_only, new_clients_only, show_on_profile, is_featured_profile_offer, requires_code, archived_at',
       )
       .in('created_by', ids)
       .eq('active', true)
@@ -842,6 +867,7 @@ function publicPromotionFromRow(row: LivePromotionRow): PublicPromotion | null {
     description,
     discountType: row.discount_type,
     discountValue: Number(row.discount_value || 0),
+    imageUrl: row.image_url || FRIZI_PROMO_FALLBACK_IMAGE,
     endAt: row.end_at || '',
     newClientsOnly: Boolean(row.new_clients_only),
     firstAppointmentOnly: Boolean(row.first_appointment_only),
@@ -1680,6 +1706,9 @@ function App() {
                 conversation.latestMessage || 'No messages yet.',
               ),
               latestMessageAt: String(conversation.latestMessageAt || ''),
+              messages: Array.isArray(conversation.messages)
+                ? conversation.messages.map(messageFromApi)
+                : [],
               unreadCount: Number(conversation.unreadCount || 0),
             }),
           )
@@ -1746,10 +1775,8 @@ function App() {
     }
     setNotificationCenterOpen(false);
     if (/message|promo/i.test(notification.type)) {
-      setActiveClientNav(
-        /message/i.test(notification.type) ? 'messages' : 'my-pros',
-      );
-      if (/message/i.test(notification.type)) void loadClientConversations();
+      setActiveClientNav('messages');
+      void loadClientConversations();
       return;
     }
     setActiveClientNav('appointments');
@@ -4618,16 +4645,22 @@ function ProfileDetails({
     <section className="min-h-screen bg-[#080808] pb-28" id="booking">
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-5 sm:px-6">
         {profile.promotion ? (
-          <div className="rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#f4c430]">
-              New client offer
-            </p>
-            <p className="mt-2 text-lg font-black text-white">
-              {profile.promotion.headline}
-            </p>
-            <p className="mt-2 text-sm font-semibold leading-6 text-white/68">
-              {profile.promotion.description}
-            </p>
+          <div className="overflow-hidden rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10">
+            <img
+              alt=""
+              className="h-40 w-full object-cover"
+              src={profile.promotion.imageUrl || FRIZI_PROMO_FALLBACK_IMAGE}
+            />
+            <div className="p-4">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[#f4c430]">
+                New client offer
+              </p>
+              <p className="mt-2 text-lg font-black text-white">
+                {profile.promotion.headline}
+              </p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-white/68">
+                {profile.promotion.description}
+              </p>
             {profile.promotion.endAt ? (
               <p className="mt-2 text-xs font-bold text-white/52">
                 Ends {formatPromoDate(profile.promotion.endAt)}
@@ -4641,6 +4674,7 @@ function ProfileDetails({
               <Send size={18} />
               Book with offer
             </button>
+            </div>
           </div>
         ) : null}
 
@@ -5447,6 +5481,8 @@ function ClientNavScreen({
         <MessagesPanel
           clientSession={clientSession}
           conversations={conversations}
+          connectedProfessionals={connectedProfessionals}
+          onBookProfessional={onBookProfessional}
           onCreateAccount={onCreateAccount}
           onSignIn={onSignIn}
         />
@@ -6212,11 +6248,15 @@ function MyProsPanel({
 function MessagesPanel({
   clientSession,
   conversations,
+  connectedProfessionals,
+  onBookProfessional,
   onCreateAccount,
   onSignIn,
 }: {
   clientSession: ClientSession | null;
   conversations: ClientConversation[];
+  connectedProfessionals: Professional[];
+  onBookProfessional: (profile: Professional) => void;
   onCreateAccount: () => void;
   onSignIn: () => void;
 }) {
@@ -6317,6 +6357,15 @@ function MessagesPanel({
       {openConversation ? (
         <ConversationPreviewSheet
           conversation={openConversation}
+          onBookProfessional={(professionalId) => {
+            const profile = connectedProfessionals.find(
+              (candidate) => normalizeClientProfessionalId(candidate.id) === normalizeClientProfessionalId(professionalId),
+            );
+            if (profile) {
+              setOpenConversation(null);
+              onBookProfessional(profile);
+            }
+          }}
           onClose={() => setOpenConversation(null)}
         />
       ) : null}
@@ -6326,69 +6375,199 @@ function MessagesPanel({
 
 function ConversationPreviewSheet({
   conversation,
+  onBookProfessional,
   onClose,
 }: {
   conversation: ClientConversation;
+  onBookProfessional: (professionalId: string) => void;
   onClose: () => void;
 }) {
+  const messages = conversation.messages.length
+    ? [...conversation.messages].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      )
+    : [
+        {
+          id: 'latest',
+          body: conversation.latestMessage,
+          createdAt: conversation.latestMessageAt,
+          isFromProfessional: true,
+          messageType: 'text',
+          promotion: null,
+        },
+      ];
+
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-end bg-black/58 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6"
+      className="fixed inset-0 z-[90] flex items-end bg-black/58 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6"
       onClick={onClose}
     >
       <section
         aria-modal="true"
-        className="w-full rounded-[28px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60 sm:max-w-md"
+        className="flex h-[min(92svh,760px)] w-full flex-col overflow-hidden rounded-t-[28px] border border-black/10 bg-white text-[#17130c] shadow-2xl shadow-black/45 sm:max-w-md sm:rounded-[28px]"
         role="dialog"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 border-b border-black/10 px-4 py-4">
           <div className="flex min-w-0 items-center gap-3">
             {conversation.avatarUrl ? (
               <img
-                className="h-14 w-14 shrink-0 rounded-2xl object-cover"
+                className="h-12 w-12 shrink-0 rounded-full border-2 border-[#ffc107] object-cover"
                 src={conversation.avatarUrl}
                 alt=""
               />
             ) : (
-              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#f4c430] font-black text-black">
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-[#ffc107] bg-[#17130c] font-black text-white">
                 {conversation.avatarFallback}
               </span>
             )}
             <div className="min-w-0">
-              <h2 className="truncate text-2xl font-black">
+              <h2 className="truncate text-xl font-black">
                 {conversation.professionalName}
               </h2>
-              {conversation.studioName ? (
-                <p className="truncate text-sm font-semibold text-white/58">
-                  {conversation.studioName}
-                </p>
-              ) : null}
+              <p className="truncate text-sm font-semibold text-[#6f665d]">
+                Professional
+              </p>
             </div>
           </div>
           <button
             aria-label="Close conversation"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/12 bg-white/[0.05]"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-black/10 bg-white"
             type="button"
             onClick={onClose}
           >
             <X size={18} />
           </button>
         </div>
-        <div className="mt-5 rounded-2xl border border-white/10 bg-black/24 p-4">
-          <p className="text-xs font-black text-[#f4c430]">Latest message</p>
-          <p className="mt-2 leading-7 text-white/78">
-            {conversation.latestMessage}
+        <div className="flex-1 overflow-y-auto px-4 py-5">
+          <p className="mb-5 text-center text-sm font-semibold text-[#8a8278]">
+            {conversation.latestMessageAt
+              ? formatConversationDay(conversation.latestMessageAt)
+              : 'Messages'}
           </p>
-          {conversation.latestMessageAt ? (
-            <p className="mt-2 text-xs font-semibold text-white/45">
-              {formatNotificationDate(conversation.latestMessageAt)}
-            </p>
-          ) : null}
+          <div className="grid gap-4">
+            {messages.map((message) => (
+              <div key={message.id} className="grid gap-3">
+                {message.body ? (
+                  <p
+                    className={`max-w-[82%] rounded-[22px] px-4 py-3 text-base leading-6 shadow-sm ${
+                      message.isFromProfessional
+                        ? 'justify-self-start bg-[#f1f1f1] text-[#17130c]'
+                        : 'justify-self-end bg-[#17130c] text-white'
+                    }`}
+                  >
+                    {message.body}
+                  </p>
+                ) : null}
+                {message.promotion ? (
+                  <ClientPromoMessageCard
+                    conversation={conversation}
+                    promotion={message.promotion}
+                    onBook={() => onBookProfessional(conversation.professionalId)}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-black/10 bg-white px-4 py-3">
+          <div className="flex min-h-12 items-center gap-3 rounded-full border border-black/12 bg-white px-3">
+            <Camera size={22} />
+            <span className="min-w-0 flex-1 truncate text-[#9a938b]">
+              Message {conversation.professionalName}...
+            </span>
+            <Send className="text-[#9a938b]" size={20} />
+          </div>
         </div>
       </section>
     </div>
   );
+}
+
+function ClientPromoMessageCard({
+  conversation,
+  onBook,
+  promotion,
+}: {
+  conversation: ClientConversation;
+  onBook: () => void;
+  promotion: ClientPromoMessage;
+}) {
+  const imageUrl = promotion.imageUrl || FRIZI_PROMO_FALLBACK_IMAGE;
+  const expired =
+    promotion.expired ||
+    Boolean(promotion.endAt && new Date(promotion.endAt).getTime() < Date.now());
+  return (
+    <article className="overflow-hidden rounded-[26px] border border-black/10 bg-[#f7f2e8] shadow-xl shadow-black/10">
+      <div className="clientPromoCreative relative min-h-[480px] overflow-hidden bg-[#080808] text-white">
+        <img
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          src={imageUrl}
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/8 via-black/20 to-black/94" />
+        <div className="absolute left-5 top-5 inline-flex items-center gap-2 rounded-full bg-[#ffc107]/86 px-4 py-2 text-sm font-black uppercase tracking-[0.08em] text-black">
+          <Sparkles size={17} />
+          Special offer
+        </div>
+        <div className="absolute inset-x-0 bottom-0 p-5">
+          <h3 className="max-w-[310px] text-[clamp(2.4rem,12vw,4rem)] font-black leading-[0.98] text-white">
+            <PromoHeadlineText promotion={promotion} />
+          </h3>
+          <div className="mt-5 h-px w-56 bg-[#ffc107]" />
+          {promotion.description ? (
+            <p className="mt-5 max-w-[330px] text-lg font-medium leading-7 text-white/90">
+              {promotion.description}
+            </p>
+          ) : null}
+          <button
+            className="mt-7 flex min-h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#ffc107] px-4 text-lg font-black text-black disabled:cursor-not-allowed disabled:bg-white/28 disabled:text-white/70"
+            type="button"
+            disabled={expired}
+            onClick={onBook}
+          >
+            <CalendarDays size={22} />
+            {expired ? 'Offer expired' : 'Book now'}
+          </button>
+        </div>
+      </div>
+      {promotion.endAt ? (
+        <div className="flex items-center gap-4 bg-[#fffaf0] px-5 py-5 text-[#17130c]">
+          <CalendarDays className="shrink-0 text-[#c69200]" size={34} />
+          <div>
+            <p className="text-base font-semibold text-[#80766d]">
+              {expired ? 'Offer expired' : 'Offer expires'}
+            </p>
+            <p className="mt-1 text-xl font-black">
+              {formatPromoExpiryDate(promotion.endAt)}
+            </p>
+            <p className="text-base font-semibold text-[#6f665d]">
+              {formatPromoExpiryTime(promotion.endAt)}
+            </p>
+          </div>
+        </div>
+      ) : null}
+      <p className="px-5 py-4 text-center text-sm font-semibold text-[#8a8278]">
+        Tap the button above to book your appointment
+        {conversation.professionalName ? ` with ${conversation.professionalName}` : ''}.
+      </p>
+    </article>
+  );
+}
+
+function PromoHeadlineText({ promotion }: { promotion: ClientPromoMessage }) {
+  const headline = promotion.headline || promoOfferLabel(promotion);
+  const label = promoOfferLabel(promotion);
+  if (label && headline.toLowerCase().startsWith(label.toLowerCase())) {
+    return (
+      <>
+        <span className="text-[#ffc107]">{headline.slice(0, label.length)}</span>
+        {headline.slice(label.length)}
+      </>
+    );
+  }
+  return <>{headline}</>;
 }
 
 function ClientSettingsPanel({
@@ -7962,6 +8141,45 @@ function formatNotificationDate(value: string) {
   });
 }
 
+function formatConversationDay(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Messages';
+  return date.toLocaleDateString('en-CA', {
+    hour: 'numeric',
+    minute: '2-digit',
+    weekday: 'long',
+  });
+}
+
+function formatPromoExpiryDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-CA', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function formatPromoExpiryTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('en-CA', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function promoOfferLabel(promotion: ClientPromoMessage | PublicPromotion) {
+  if (promotion.discountType === 'percentage')
+    return `${Math.max(0, promotion.discountValue || 0)}% off`;
+  if (promotion.discountType === 'fixed_amount')
+    return `${formatCurrency(Math.max(0, promotion.discountValue || 0) * 100)} off`;
+  if (promotion.discountType === 'free_item') return 'Free offer';
+  return '';
+}
+
 function formatUnreadBadgeCount(count: number) {
   return count > 99 ? '99+' : String(count);
 }
@@ -8159,9 +8377,38 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
           description: String(promotion.description || ''),
           discountType: String(promotion.discountType || ''),
           discountValue: Number(promotion.discountValue || 0),
+          imageUrl: String(promotion.imageUrl || FRIZI_PROMO_FALLBACK_IMAGE),
           endAt: String(promotion.endAt || ''),
           newClientsOnly: Boolean(promotion.newClientsOnly),
           firstAppointmentOnly: Boolean(promotion.firstAppointmentOnly),
+        }
+      : null,
+  };
+}
+
+function messageFromApi(message: Record<string, unknown>): ClientConversationMessage {
+  const promotion =
+    message.promotion && typeof message.promotion === 'object'
+      ? (message.promotion as Record<string, unknown>)
+      : null;
+  return {
+    id: String(message.id || ''),
+    body: String(message.body || ''),
+    createdAt: String(message.createdAt || ''),
+    isFromProfessional: Boolean(message.isFromProfessional),
+    messageType: String(message.messageType || 'text'),
+    promotion: promotion
+      ? {
+          id: String(promotion.id || ''),
+          headline: String(promotion.headline || ''),
+          description: String(promotion.description || ''),
+          discountType: String(promotion.discountType || ''),
+          discountValue: Number(promotion.discountValue || 0),
+          imageUrl: String(
+            promotion.imageUrl || FRIZI_PROMO_FALLBACK_IMAGE,
+          ),
+          endAt: String(promotion.endAt || ''),
+          expired: Boolean(promotion.expired),
         }
       : null,
   };

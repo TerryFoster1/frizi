@@ -18,9 +18,25 @@ type ConversationMessageRow = {
   id: string;
   conversation_id: string;
   sender_role: string | null;
+  message_type: string | null;
   body: string | null;
+  promotion_id: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string | null;
   read_at: string | null;
+};
+
+type PromotionMessageRow = {
+  id: string;
+  client_headline: string | null;
+  public_description: string | null;
+  name: string | null;
+  discount_type: string | null;
+  discount_value: number | null;
+  image_url: string | null;
+  end_at: string | null;
+  active: boolean | null;
+  archived_at: string | null;
 };
 
 type ProfessionalInboxRow = {
@@ -161,7 +177,7 @@ export default async function handler(
           ? supabase
               .from('frizi_messages')
               .select(
-                'id, conversation_id, sender_role, body, created_at, read_at',
+                'id, conversation_id, sender_role, message_type, body, promotion_id, metadata, created_at, read_at',
               )
               .in('conversation_id', conversationIds)
               .order('created_at', { ascending: false })
@@ -171,6 +187,22 @@ export default async function handler(
 
       const professionalRows = (professionals || []) as ProfessionalInboxRow[];
       const messageRows = (messages || []) as ConversationMessageRow[];
+      const promotionIds = Array.from(
+        new Set(messageRows.map((message) => String(message.promotion_id || '')).filter(Boolean)),
+      );
+      const { data: promotionRows, error: promotionRowsError } = promotionIds.length
+        ? await supabase
+            .from('frizi_promotions')
+            .select('id, client_headline, public_description, name, discount_type, discount_value, image_url, end_at, active, archived_at')
+            .in('id', promotionIds)
+        : { data: [], error: null };
+      if (promotionRowsError) throw promotionRowsError;
+      const promotionsById = new Map<string, PromotionMessageRow>(
+        ((promotionRows || []) as PromotionMessageRow[]).map((promotion) => [
+          String(promotion.id),
+          promotion,
+        ]),
+      );
       const professionalsById = new Map<string, ProfessionalInboxRow>(
         professionalRows.map((professional) => [
           String(professional.id),
@@ -204,6 +236,12 @@ export default async function handler(
             (message) =>
               message.sender_role === 'professional' && !message.read_at,
           ).length;
+          const messagesForClient = conversationMessages
+            .slice(0, 25)
+            .reverse()
+            .map((message) =>
+              messagePayloadForClient(message, promotionsById),
+            );
           return {
             id: conversation.id,
             professionalId: conversation.professional_id,
@@ -217,6 +255,7 @@ export default async function handler(
             latestMessage: latestMessage?.body || 'No messages yet.',
             latestMessageAt:
               latestMessage?.created_at || conversation.updated_at || '',
+            messages: messagesForClient,
             unreadCount,
           };
         }),
@@ -403,4 +442,56 @@ export default async function handler(
         error instanceof Error ? error.message : 'Message could not be sent.',
     });
   }
+}
+
+function messagePayloadForClient(
+  message: ConversationMessageRow,
+  promotionsById: Map<string, PromotionMessageRow>,
+) {
+  return {
+    id: message.id,
+    body: message.body || '',
+    createdAt: message.created_at || '',
+    isFromProfessional: message.sender_role === 'professional',
+    messageType: message.message_type || 'text',
+    promotion: promotionPayloadForMessage(message, promotionsById),
+  };
+}
+
+function promotionPayloadForMessage(
+  message: ConversationMessageRow,
+  promotionsById: Map<string, PromotionMessageRow>,
+) {
+  const snapshot =
+    message.metadata &&
+    typeof message.metadata === 'object' &&
+    message.metadata.promotionSnapshot &&
+    typeof message.metadata.promotionSnapshot === 'object'
+      ? (message.metadata.promotionSnapshot as Record<string, unknown>)
+      : null;
+  const promotionId = String(message.promotion_id || snapshot?.id || '');
+  if (!promotionId) return null;
+  const promotion = promotionsById.get(promotionId);
+  const headline = String(
+    snapshot?.headline ||
+      promotion?.client_headline ||
+      promotion?.name ||
+      '',
+  ).trim();
+  const description = String(
+    snapshot?.description || promotion?.public_description || '',
+  ).trim();
+  if (!headline && !description) return null;
+  const endAt = String(snapshot?.endAt || promotion?.end_at || '');
+  const expired = Boolean(endAt && new Date(endAt).getTime() < Date.now());
+  return {
+    id: promotionId,
+    headline,
+    description,
+    discountType: String(snapshot?.discountType || promotion?.discount_type || ''),
+    discountValue: Number(snapshot?.discountValue || promotion?.discount_value || 0),
+    imageUrl: String(snapshot?.imageUrl || promotion?.image_url || '/frizi-client-hero-salon.png'),
+    endAt,
+    expired: expired || promotion?.active === false || Boolean(promotion?.archived_at),
+  };
 }

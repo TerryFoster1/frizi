@@ -150,6 +150,16 @@ img {
   border-color: rgba(255, 250, 240, 0.24) !important;
 }
 
+.clientApp .clientPromoCreative,
+.clientApp .clientPromoCreative [class*='text-white'] {
+  color: #fffaf0 !important;
+}
+
+.clientApp .clientPromoCreative [class*='bg-[#ffc107]'],
+.clientApp .clientPromoCreative [class*='text-black'] {
+  color: var(--frizi-on-gold) !important;
+}
+
 .desktopMobilePrompt {
   position: fixed;
   right: max(20px, calc((100vw - 720px) / 2 - 360px));
