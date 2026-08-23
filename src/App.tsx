@@ -1965,29 +1965,6 @@ function App() {
     void refreshBookingProfileServices(profile);
   }
 
-  function openDiscovery() {
-    setProfessionalPickerOpen(false);
-    setBookingProfile(null);
-    setActiveClientNav(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function openAppointmentBooking() {
-    if (!clientSession) {
-      openDiscovery();
-      return;
-    }
-    if (connectedProfessionals.length === 0) {
-      openDiscovery();
-      return;
-    }
-    if (connectedProfessionals.length === 1) {
-      startBooking(connectedProfessionals[0]);
-      return;
-    }
-    setProfessionalPickerOpen(true);
-  }
-
   function confirmBooking(profileOverride?: Professional | null) {
     const profile = profileOverride || activeBookingProfile;
     if (!profile) return;
@@ -2219,7 +2196,6 @@ function App() {
           clientSession={clientSession}
           isDemo={false}
           isListening={isListening}
-          onBookAppointment={openAppointmentBooking}
           onBookProfessional={(profile) => startBooking(profile)}
           onCancelRequest={cancelAppointmentRequest}
           onCreateAccount={() => openClientAuth('default', 'signup')}
@@ -5377,7 +5353,6 @@ function ClientNavScreen({
   clientSession,
   isListening,
   isDemo,
-  onBookAppointment,
   onBookProfessional,
   onCancelRequest,
   onCreateAccount,
@@ -5403,7 +5378,6 @@ function ClientNavScreen({
   clientSession: ClientSession | null;
   isListening: boolean;
   isDemo: boolean;
-  onBookAppointment: () => void;
   onBookProfessional: (profile: Professional) => void;
   onCancelRequest: (appointmentId: string) => Promise<void>;
   onCreateAccount: () => void;
@@ -5441,13 +5415,11 @@ function ClientNavScreen({
           appointments={appointments}
           booking={booking}
           clientSession={clientSession}
-          connectedProfessionals={connectedProfessionals}
           isListening={isListening}
           isDemo={isDemo}
           onMic={onMic}
           onCancelRequest={onCancelRequest}
           onMessageAppointment={onMessageAppointment}
-          onBookAppointment={onBookAppointment}
           onSearch={onSearch}
           query={query}
           setQuery={setQuery}
@@ -5596,11 +5568,9 @@ function AppointmentsPanel({
   appointments,
   booking,
   clientSession,
-  connectedProfessionals,
   isListening,
   onMic,
   onCancelRequest,
-  onBookAppointment,
   onMessageAppointment,
   onSearch,
   query,
@@ -5610,12 +5580,10 @@ function AppointmentsPanel({
   appointments: BookingRequest[];
   booking: BookingRequest | null;
   clientSession: ClientSession | null;
-  connectedProfessionals: Professional[];
   isDemo: boolean;
   isListening: boolean;
   onMic: () => void;
   onCancelRequest: (appointmentId: string) => Promise<void>;
-  onBookAppointment: () => void;
   onMessageAppointment: (
     appointment: BookingRequest,
     body: string,
@@ -5650,50 +5618,24 @@ function AppointmentsPanel({
         appointment.status,
       ),
   );
-  const hasConnectedProfessionals = connectedProfessionals.length > 0;
-  const ctaLabel = hasConnectedProfessionals
-    ? 'Book an appointment'
-    : 'Find a professional';
 
   return (
     <div className="mt-5 space-y-4">
       {!clientSession ? (
-        <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <Search className="text-[#f4c430]" size={28} />
-          <h2 className="mt-3 text-2xl font-black">
-            Sign up for free to track your appointments and get reminders
-          </h2>
-          <p className="mt-2 leading-7 text-white/68">
-            You can still search and book without a paid account. A free Frizi
-            profile keeps your appointments, reminders, and professionals in
-            one place.
-          </p>
-          <div className="mt-4">
-            <SearchInputWithSuggestions
-              compact
-              id="frizi-appointments-search"
-              isListening={isListening}
-              onMic={onMic}
-              onSubmit={onSearch}
-              query={query}
-              setQuery={setQuery}
-              voiceMessage={voiceMessage}
-            />
-          </div>
-        </section>
+        <h2 className="text-2xl font-black leading-tight">
+          Sign up for free to track your appointments and get reminders
+        </h2>
       ) : null}
-      <button
-        className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 text-base font-black text-black"
-        type="button"
-        onClick={onBookAppointment}
-      >
-        {hasConnectedProfessionals ? (
-          <CalendarDays size={20} />
-        ) : (
-          <Search size={20} />
-        )}
-        {ctaLabel}
-      </button>
+      <SearchInputWithSuggestions
+        compact
+        id="frizi-appointments-search"
+        isListening={isListening}
+        onMic={onMic}
+        onSubmit={onSearch}
+        query={query}
+        setQuery={setQuery}
+        voiceMessage={voiceMessage}
+      />
 
       <section className="rounded-[24px] border border-white/10 bg-[#151519] p-4">
         <h2 className="text-xl font-black">Upcoming</h2>
