@@ -585,6 +585,8 @@ type LivePromotionRow = {
   active: boolean;
   first_appointment_only: boolean;
   new_clients_only: boolean;
+  show_on_profile?: boolean;
+  is_featured_profile_offer?: boolean;
   requires_code: boolean;
   archived_at?: string | null;
 };
@@ -716,10 +718,12 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
     supabase
       .from('frizi_promotions')
       .select(
-        'id, created_by, name, client_headline, public_description, discount_type, discount_value, end_at, active, first_appointment_only, new_clients_only, requires_code, archived_at',
+        'id, created_by, name, client_headline, public_description, discount_type, discount_value, end_at, active, first_appointment_only, new_clients_only, show_on_profile, is_featured_profile_offer, requires_code, archived_at',
       )
       .in('created_by', ids)
       .eq('active', true)
+      .eq('show_on_profile', true)
+      .eq('is_featured_profile_offer', true)
       .eq('requires_code', false)
       .order('updated_at', { ascending: false }),
   ]);
@@ -828,6 +832,7 @@ function publicPromotionFromRow(row: LivePromotionRow): PublicPromotion | null {
   const description = String(row.public_description || '').trim();
   if (!headline || !description) return null;
   if (!row.active || row.requires_code || row.archived_at) return null;
+  if (!row.show_on_profile || !row.is_featured_profile_offer) return null;
   if (row.end_at && new Date(row.end_at).getTime() < Date.now()) return null;
   if (!row.new_clients_only && !row.first_appointment_only) return null;
 
@@ -1273,6 +1278,7 @@ function App() {
     rankedProfiles.length > 0
       ? rankedProfiles[activeIndex % rankedProfiles.length]
       : null;
+  const lastOpenedProfileKey = useRef('');
   const activeBookingProfile = bookingProfile || activeProfile;
   const activeService = activeBookingProfile
     ? selectedService || activeBookingProfile.services[0]?.name || ''
@@ -2037,6 +2043,23 @@ function App() {
   }
 
   const showResults = hasSearched && Boolean(activeProfile);
+
+  useEffect(() => {
+    if (!showResults || !activeProfile || activeClientNav || bookingProfile)
+      return;
+    const profileKey = `${submittedQuery}|${activeProfile.id}`;
+    if (lastOpenedProfileKey.current === profileKey) return;
+    lastOpenedProfileKey.current = profileKey;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    });
+  }, [
+    activeClientNav,
+    activeProfile,
+    bookingProfile,
+    showResults,
+    submittedQuery,
+  ]);
 
   return (
     <main className="clientApp min-h-screen bg-[#080808] pb-24 text-white">
@@ -4425,7 +4448,8 @@ function DeckCard({
           className="absolute inset-0 h-full w-full object-cover"
           src={profile.heroImage}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/8 to-black/82" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/8 via-black/12 to-black/92" />
+        <div className="absolute inset-x-0 bottom-0 h-[56%] bg-gradient-to-t from-black/96 via-black/72 to-transparent" />
         <div className="absolute left-4 right-4 top-4 z-20 pt-safe">
           <ResultsSearchPill
             isListening={isListening}
@@ -4457,21 +4481,21 @@ function DeckCard({
             <Star size={22} fill={isSaved ? 'currentColor' : 'none'} />
           </button>
         </div>
-        <div className="absolute bottom-0 left-0 right-0 z-10 p-5 sm:p-8">
-          <div className="flex items-end gap-3">
+        <div className="absolute bottom-0 left-0 right-0 z-10 p-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:p-8 sm:pb-8">
+          <div className="flex items-center gap-4">
             <img
               alt={`${profile.name} profile`}
-              className="h-16 w-16 shrink-0 rounded-full border-4 border-white object-cover shadow-2xl shadow-black/45 sm:h-20 sm:w-20"
+              className="h-[88px] w-[88px] shrink-0 rounded-full border-4 border-white object-cover shadow-2xl shadow-black/45 sm:h-[104px] sm:w-[104px]"
               src={profile.detailImage}
             />
-            <div className="min-w-0 flex-1 pb-1">
-              <h2 className="text-3xl font-black leading-none drop-shadow-2xl sm:text-5xl">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[clamp(2rem,8.4vw,2.35rem)] font-black leading-[0.95] drop-shadow-2xl sm:text-5xl">
                 {profile.name}
               </h2>
-              <p className="mt-2 text-lg font-black leading-6 text-white/90 drop-shadow sm:text-xl">
+              <p className="mt-2 text-base font-black leading-5 text-white/92 drop-shadow sm:text-xl">
                 {profile.role}
               </p>
-              <p className="mt-1 inline-flex items-center gap-1 text-sm font-bold text-white/86 drop-shadow">
+              <p className="mt-1 inline-flex items-center gap-1 text-sm font-bold leading-5 text-white/86 drop-shadow">
                 <MapPin className="text-[#f4c430]" size={16} />
                 {profile.neighborhood || profile.distance}
               </p>
@@ -4483,9 +4507,9 @@ function DeckCard({
               ) : null}
             </div>
           </div>
-          <div className="mt-5 grid grid-cols-3 gap-2">
+          <div className="mt-6 grid grid-cols-[1.25fr_1fr_1fr] gap-2">
             <button
-              className="flex min-h-12 items-center justify-center rounded-xl bg-[#f4c430] px-2 text-xs font-black leading-tight text-black sm:text-sm"
+              className="flex min-h-12 items-center justify-center rounded-xl bg-[#f4c430] px-2 text-[13px] font-black leading-tight text-black sm:text-sm"
               type="button"
               onClick={onBook}
             >

@@ -13,6 +13,7 @@ function sendJson(response: ServerResponse, status: number, payload: unknown) {
 function publicPromotionPayload(promotion: Record<string, any> | null) {
   if (!promotion) return null;
   if (!promotion.active || promotion.requires_code || promotion.archived_at) return null;
+  if (!promotion.show_on_profile || !promotion.is_featured_profile_offer) return null;
   if (promotion.end_at && new Date(promotion.end_at).getTime() < Date.now()) return null;
   if (!promotion.new_clients_only && !promotion.first_appointment_only) return null;
   const headline = String(promotion.client_headline || promotion.name || '').trim();
@@ -116,9 +117,11 @@ export default async function handler(request: IncomingMessage, response: Server
         .order('display_order', { ascending: true }),
       supabase
         .from('frizi_promotions')
-        .select('id, name, client_headline, public_description, discount_type, discount_value, active, start_at, end_at, first_appointment_only, new_clients_only, requires_code, archived_at')
+        .select('id, name, client_headline, public_description, discount_type, discount_value, active, start_at, end_at, first_appointment_only, new_clients_only, show_on_profile, is_featured_profile_offer, requires_code, archived_at')
         .eq('created_by', String(invite.professional_id))
         .eq('active', true)
+        .eq('show_on_profile', true)
+        .eq('is_featured_profile_offer', true)
         .eq('requires_code', false)
         .order('updated_at', { ascending: false })
         .limit(8),
