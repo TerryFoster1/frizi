@@ -770,11 +770,9 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
           distance: location?.city ? location.city : 'Local area',
           heroImage:
             profile.hero_photo_url ||
-            profile.profile_photo_url ||
-            '/frizi-icon.png',
+            '/frizi-client-hero-salon.png',
           detailImage:
             profile.profile_photo_url ||
-            profile.hero_photo_url ||
             '/frizi-icon.png',
           rating: 0,
           reviews: 0,
@@ -1138,6 +1136,7 @@ function App() {
   );
   const [selectedService, setSelectedService] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
+  const [profileBookingSignal, setProfileBookingSignal] = useState(0);
   const [booking, setBooking] = useState<BookingRequest | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState('');
@@ -1174,7 +1173,7 @@ function App() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [saveProPromptProfile, setSaveProPromptProfile] =
     useState<Professional | null>(null);
-  const [savingProfessionalId, setSavingProfessionalId] = useState('');
+  const [, setSavingProfessionalId] = useState('');
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [clientNotifications, setClientNotifications] = useState<
     ClientNotification[]
@@ -2253,6 +2252,12 @@ function App() {
                   isListening={isListening}
                   isSaved={profileIsSaved(activeProfile)}
                   onMic={startVoiceSearch}
+                  onBook={() => setProfileBookingSignal((value) => value + 1)}
+                  onMessage={() =>
+                    clientSession
+                      ? setActiveClientNav('messages')
+                      : openClientAuth('messages', 'signup')
+                  }
                   onNext={() => moveDeck('next')}
                   onSearch={submitSearch}
                   onPrevious={() => moveDeck('previous')}
@@ -2271,14 +2276,7 @@ function App() {
                   clientSession={clientSession}
                   isClientSignedIn={Boolean(clientSession)}
                   onBook={confirmBooking}
-                  onSaveProfessional={() =>
-                    void saveProfessional(activeProfile)
-                  }
-                  isSaved={profileIsSaved(activeProfile)}
-                  saveBusy={
-                    savingProfessionalId ===
-                    normalizeClientProfessionalId(activeProfile.id)
-                  }
+                  bookingOpenSignal={profileBookingSignal}
                   onPromoSignupRequired={() => openClientAuth('promo')}
                   openBookingAfterAuth={openBookingAfterAuth}
                   profile={activeProfile}
@@ -4313,6 +4311,8 @@ function DeckCard({
   activeIndex,
   isListening,
   isSaved,
+  onBook,
+  onMessage,
   onMic,
   onNext,
   onSearch,
@@ -4327,6 +4327,8 @@ function DeckCard({
   activeIndex: number;
   isListening: boolean;
   isSaved: boolean;
+  onBook: () => void;
+  onMessage: () => void;
   onMic: () => void;
   onNext: () => void;
   onSearch: (nextQuery?: string) => void;
@@ -4455,22 +4457,60 @@ function DeckCard({
             <Star size={22} fill={isSaved ? 'currentColor' : 'none'} />
           </button>
         </div>
-        <div className="absolute bottom-0 right-0 z-10 max-w-[86%] p-5 text-right sm:max-w-xl sm:p-8">
-          <h2 className="text-5xl font-black leading-none drop-shadow-2xl sm:text-7xl">
-            {profile.name}
-          </h2>
-          <p className="ml-auto mt-3 max-w-md text-xl font-black leading-6 text-white/90 drop-shadow sm:text-2xl">
-            {profile.studio}
-          </p>
-          <div className="mt-4 flex flex-wrap items-center justify-end gap-3 text-sm font-black text-white">
-            <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
-              <Star className="text-[#f4c430]" size={16} fill="currentColor" />
-              {profile.reviews > 0 ? profile.rating : 'New'}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-2 backdrop-blur">
-              <MapPin className="text-[#f4c430]" size={16} />
-              {profile.distance}
-            </span>
+        <div className="absolute bottom-0 left-0 right-0 z-10 p-5 sm:p-8">
+          <div className="flex items-end gap-3">
+            <img
+              alt={`${profile.name} profile`}
+              className="h-16 w-16 shrink-0 rounded-full border-4 border-white object-cover shadow-2xl shadow-black/45 sm:h-20 sm:w-20"
+              src={profile.detailImage}
+            />
+            <div className="min-w-0 flex-1 pb-1">
+              <h2 className="text-3xl font-black leading-none drop-shadow-2xl sm:text-5xl">
+                {profile.name}
+              </h2>
+              <p className="mt-2 text-lg font-black leading-6 text-white/90 drop-shadow sm:text-xl">
+                {profile.role}
+              </p>
+              <p className="mt-1 inline-flex items-center gap-1 text-sm font-bold text-white/86 drop-shadow">
+                <MapPin className="text-[#f4c430]" size={16} />
+                {profile.neighborhood || profile.distance}
+              </p>
+              {profile.reviews > 0 ? (
+                <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-1 text-sm font-black text-white backdrop-blur">
+                  <Star className="text-[#f4c430]" size={15} fill="currentColor" />
+                  {profile.rating} ({profile.reviews})
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            <button
+              className="flex min-h-12 items-center justify-center rounded-xl bg-[#f4c430] px-2 text-xs font-black leading-tight text-black sm:text-sm"
+              type="button"
+              onClick={onBook}
+            >
+              Book appointment
+            </button>
+            <button
+              className={`flex min-h-12 items-center justify-center gap-1 rounded-xl border px-2 text-sm font-black backdrop-blur ${
+                isSaved
+                  ? 'border-[#f4c430] bg-[#f4c430] text-black'
+                  : 'border-white/35 bg-black/35 text-white'
+              }`}
+              type="button"
+              onClick={onToggleSaved}
+            >
+              <Star size={16} fill={isSaved ? 'currentColor' : 'none'} />
+              {isSaved ? 'Saved' : 'Save Pro'}
+            </button>
+            <button
+              className="flex min-h-12 items-center justify-center gap-1 rounded-xl border border-white/35 bg-black/35 px-2 text-sm font-black text-white backdrop-blur"
+              type="button"
+              onClick={onMessage}
+            >
+              <MessageCircle size={16} />
+              Message
+            </button>
           </div>
         </div>
       </div>
@@ -4481,16 +4521,14 @@ function DeckCard({
 function ProfileDetails({
   booking,
   bookingError,
+  bookingOpenSignal,
   clientSession,
-  isSaved,
   isClientSignedIn,
   onBook,
   onBookingAfterAuthHandled,
   onPromoSignupRequired,
-  onSaveProfessional,
   openBookingAfterAuth,
   profile,
-  saveBusy,
   selectedService,
   selectedTime,
   setSelectedService,
@@ -4498,16 +4536,14 @@ function ProfileDetails({
 }: {
   booking: BookingRequest | null;
   bookingError: string;
+  bookingOpenSignal: number;
   clientSession: ClientSession | null;
-  isSaved: boolean;
   isClientSignedIn: boolean;
   onBook: () => void;
   onBookingAfterAuthHandled: () => void;
   onPromoSignupRequired: () => void;
-  onSaveProfessional: () => void;
   openBookingAfterAuth: boolean;
   profile: Professional;
-  saveBusy: boolean;
   selectedService: string;
   selectedTime: string;
   setSelectedService: (value: string) => void;
@@ -4515,6 +4551,7 @@ function ProfileDetails({
 }) {
   const [showReviews, setShowReviews] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
+  const bookingSignalSeen = useRef(bookingOpenSignal);
   const selectedServiceRecord =
     profile.services.find((service) => service.name === selectedService) ||
     profile.services[0];
@@ -4534,6 +4571,17 @@ function ProfileDetails({
     setBookingOpen(true);
     onBookingAfterAuthHandled();
   }, [isClientSignedIn, onBookingAfterAuthHandled, openBookingAfterAuth]);
+
+  useEffect(() => {
+    if (bookingOpenSignal === bookingSignalSeen.current) return;
+    bookingSignalSeen.current = bookingOpenSignal;
+    setBookingOpen(true);
+    window.setTimeout(() => {
+      document
+        .getElementById('booking')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 30);
+  }, [bookingOpenSignal]);
 
   function applyPromotion() {
     if (isClientSignedIn) {
@@ -4569,58 +4617,6 @@ function ProfileDetails({
   return (
     <section className="min-h-screen bg-[#080808] pb-28" id="booking">
       <div className="mx-auto max-w-5xl space-y-4 px-4 py-5 sm:px-6">
-        <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#151519]">
-          <div className="relative h-56">
-            <img
-              alt=""
-              className="h-full w-full object-cover"
-              src={profile.heroImage}
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#151519] via-black/25 to-black/10" />
-          </div>
-          <div className="relative px-5 pb-5">
-            <img
-              alt={`${profile.name} profile`}
-              className="-mt-14 h-28 w-28 rounded-full border-4 border-[#151519] object-cover ring-2 ring-[#f4c430]"
-              src={profile.detailImage}
-            />
-            <p className="mt-3 text-sm font-black text-[#f4c430]">
-              {profile.studio}
-            </p>
-            <h3 className="mt-1 text-3xl font-black">{profile.name}</h3>
-            <p className="mt-2 text-sm font-semibold leading-6 text-white/64">
-              {profile.role} in {profile.neighborhood}
-            </p>
-            <p className="mt-5 text-base leading-7 text-white/72">
-              {profile.bio}
-            </p>
-          </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <button
-            className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-4 text-base font-black text-black"
-            type="button"
-            onClick={() => setBookingOpen(true)}
-          >
-            <CalendarDays size={20} />
-            Book an appointment
-          </button>
-          <button
-            className={`flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border px-4 text-base font-black ${
-              isSaved
-                ? 'border-[#f4c430] bg-[#f4c430]/12 text-[#f4c430]'
-                : 'border-white/15 bg-white/[0.06] text-white'
-            }`}
-            type="button"
-            disabled={saveBusy || isSaved}
-            onClick={onSaveProfessional}
-          >
-            <Star size={20} fill={isSaved ? 'currentColor' : 'none'} />
-            {saveBusy ? 'Saving...' : isSaved ? 'Saved' : 'Save Pro'}
-          </button>
-        </div>
-
         {profile.promotion ? (
           <div className="rounded-[28px] border border-[#f4c430]/30 bg-[#f4c430]/10 p-4">
             <p className="text-xs font-black uppercase tracking-[0.14em] text-[#f4c430]">
@@ -4653,7 +4649,9 @@ function ProfileDetails({
           type="button"
           onClick={() => setShowReviews((current) => !current)}
         >
-          Reviews {profile.reviews > 0 ? profile.rating : 'New'}
+          {profile.reviews > 0
+            ? `Reviews ${profile.rating} (${profile.reviews})`
+            : 'Reviews'}
           <Star size={16} fill="currentColor" />
         </button>
 
@@ -4682,6 +4680,50 @@ function ProfileDetails({
             ) : (
               <p className="leading-7 text-white/64">No public reviews yet.</p>
             )}
+          </Panel>
+        ) : null}
+
+        <Panel title="About">
+          <p className="leading-7 text-white/70">
+            {profile.bio || 'This professional has not added a bio yet.'}
+          </p>
+        </Panel>
+
+        {profile.specialties.length ? (
+          <Panel title="Specialties">
+            <div className="flex flex-wrap gap-2">
+              {profile.specialties.map((specialty) => (
+                <span
+                  className="rounded-full border border-white/12 bg-white/[0.05] px-3 py-2 text-sm font-black text-white/82"
+                  key={specialty}
+                >
+                  {specialty}
+                </span>
+              ))}
+            </div>
+          </Panel>
+        ) : null}
+
+        {profile.services.length ? (
+          <Panel title="Services">
+            <div className="space-y-3">
+              {profile.services.map((service) => (
+                <article
+                  className="flex items-center justify-between gap-4 rounded-2xl bg-white/[0.05] p-4"
+                  key={service.id || service.name}
+                >
+                  <div>
+                    <p className="font-black">{service.name}</p>
+                    <p className="mt-1 text-sm font-semibold text-white/58">
+                      {service.duration}
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-sm font-black text-[#f4c430]">
+                    {service.price}
+                  </p>
+                </article>
+              ))}
+            </div>
           </Panel>
         ) : null}
       </div>
@@ -8103,10 +8145,10 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
     neighborhood: String(profile.neighborhood || 'Local area'),
     distance: String(profile.distance || 'Local area'),
     heroImage: String(
-      profile.heroImage || profile.detailImage || '/frizi-icon.png',
+      profile.heroImage || '/frizi-client-hero-salon.png',
     ),
     detailImage: String(
-      profile.detailImage || profile.heroImage || '/frizi-icon.png',
+      profile.detailImage || '/frizi-icon.png',
     ),
     rating: Number(profile.rating || 0),
     reviews: Number(profile.reviews || 0),

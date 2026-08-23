@@ -545,11 +545,9 @@ async function loadConnectedProfessionals(
         distance: location?.city || 'Local area',
         heroImage:
           professional.hero_photo_url ||
-          professional.profile_photo_url ||
-          '/frizi-icon.png',
+          '/frizi-client-hero-salon.png',
         detailImage:
           professional.profile_photo_url ||
-          professional.hero_photo_url ||
           '/frizi-icon.png',
         rating: 0,
         reviews: 0,
