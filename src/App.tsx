@@ -11,7 +11,6 @@ import {
   MapPin,
   MessageCircle,
   Mic,
-  Lightbulb,
   QrCode,
   ReceiptText,
   Search,
@@ -219,11 +218,11 @@ const locationPromptStorageKey = 'frizi-client-location-prompt-complete';
 type ClientNavKey =
   | 'appointments'
   | 'my-pros'
+  | 'messages'
   | 'products'
-  | 'hair-tips'
   | 'hair-profile'
   | 'settings';
-type AccountNavKey = 'appointments' | 'my-pros' | 'hair-profile';
+type AccountNavKey = 'appointments' | 'my-pros' | 'messages' | 'hair-profile';
 type ClientAuthIntent =
   'default' | 'promo' | 'booking' | 'invite' | AccountNavKey;
 
@@ -263,6 +262,18 @@ type ClientNotification = {
   createdAt: string;
 };
 
+type ClientConversation = {
+  id: string;
+  professionalId: string;
+  professionalName: string;
+  studioName: string;
+  avatarUrl: string;
+  avatarFallback: string;
+  latestMessage: string;
+  latestMessageAt: string;
+  unreadCount: number;
+};
+
 type ClientPassport = {
   id: string;
   status: string;
@@ -274,6 +285,7 @@ function isAccountNavIntent(intent: ClientAuthIntent): intent is AccountNavKey {
   return (
     intent === 'appointments' ||
     intent === 'my-pros' ||
+    intent === 'messages' ||
     intent === 'hair-profile'
   );
 }
@@ -1067,6 +1079,9 @@ function App() {
   const [voiceMessage, setVoiceMessage] = useState('');
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState<ClientAuthIntent>('default');
+  const [authInitialMode, setAuthInitialMode] = useState<'signup' | 'signin'>(
+    'signup',
+  );
   const [clientSession, setClientSession] = useState<ClientSession | null>(
     null,
   );
@@ -1079,6 +1094,9 @@ function App() {
   >([]);
   const [clientAppointments, setClientAppointments] = useState<
     BookingRequest[]
+  >([]);
+  const [clientConversations, setClientConversations] = useState<
+    ClientConversation[]
   >([]);
   const [bookingProfile, setBookingProfile] = useState<Professional | null>(
     null,
@@ -1143,6 +1161,7 @@ function App() {
         } else {
           void loadClientAppointments(session);
           void loadClientNotifications();
+          void loadClientConversations(session);
           if (authContext?.intent === 'promo') {
             setOpenBookingAfterAuth(true);
           } else if (authContext?.intent === 'invite') {
@@ -1248,6 +1267,7 @@ function App() {
         />
         {authModalOpen ? (
           <ClientAuthModal
+            initialMode={authInitialMode}
             intent={authIntent}
             onClose={() => setAuthModalOpen(false)}
             onComplete={handleClientAuth}
@@ -1335,6 +1355,9 @@ function App() {
       intent: authIntent,
       route: window.location.pathname,
     });
+    void loadClientAppointments(session);
+    void loadClientNotifications();
+    void loadClientConversations(session);
     if (authIntent === 'invite') {
       setAuthIntent('default');
       return;
@@ -1379,6 +1402,7 @@ function App() {
     window.sessionStorage.removeItem(clientOAuthContextStorageKey);
     setClientSession(null);
     setClientAppointments([]);
+    setClientConversations([]);
     setClientNotifications([]);
     setBooking(null);
     setOpenBookingAfterAuth(false);
@@ -1459,6 +1483,48 @@ function App() {
     }
   }
 
+  async function loadClientConversations(session = clientSession) {
+    if (!session?.accessToken) {
+      setClientConversations([]);
+      return;
+    }
+    try {
+      const response = await fetch('/api/client-messages', {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(payload.error || 'Could not load messages.');
+      const conversations: ClientConversation[] = Array.isArray(
+        payload.conversations,
+      )
+        ? payload.conversations.map(
+            (conversation: Record<string, unknown>) => ({
+              id: String(conversation.id || ''),
+              professionalId: String(conversation.professionalId || ''),
+              professionalName: String(
+                conversation.professionalName || 'Frizi Pro',
+              ),
+              studioName: String(conversation.studioName || ''),
+              avatarUrl: String(conversation.avatarUrl || ''),
+              avatarFallback: String(conversation.avatarFallback || 'FP'),
+              latestMessage: String(
+                conversation.latestMessage || 'No messages yet.',
+              ),
+              latestMessageAt: String(conversation.latestMessageAt || ''),
+              unreadCount: Number(conversation.unreadCount || 0),
+            }),
+          )
+        : [];
+      setClientConversations(conversations);
+    } catch (error) {
+      console.warn(
+        '[frizi-client-conversations]',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
   async function loadClientNotifications() {
     if (!isSupabaseConfigured) return;
     try {
@@ -1512,7 +1578,10 @@ function App() {
     }
     setNotificationCenterOpen(false);
     if (/message|promo/i.test(notification.type)) {
-      setActiveClientNav('my-pros');
+      setActiveClientNav(
+        /message/i.test(notification.type) ? 'messages' : 'my-pros',
+      );
+      if (/message/i.test(notification.type)) void loadClientConversations();
       return;
     }
     setActiveClientNav('appointments');
@@ -1675,23 +1744,26 @@ function App() {
     if (!response.ok)
       throw new Error(payload.error || "We couldn't send that message.");
     void loadClientNotifications();
+    void loadClientConversations();
   }
 
-  function openClientAuth(intent: ClientAuthIntent = 'default') {
+  function openClientAuth(
+    intent: ClientAuthIntent = 'default',
+    initialMode: 'signup' | 'signin' = 'signup',
+  ) {
     setAuthIntent(intent);
+    setAuthInitialMode(initialMode);
     setAuthModalOpen(true);
   }
 
   function handleClientNavChange(nav: ClientNavKey) {
-    if (nav === 'products' || nav === 'hair-tips') {
-      setActiveClientNav(nav);
-      return;
-    }
-    if (!clientSession) {
-      openClientAuth(nav === 'settings' ? 'hair-profile' : nav);
+    if ((nav === 'settings' || nav === 'hair-profile') && !clientSession) {
+      openClientAuth('hair-profile');
       return;
     }
     setActiveClientNav(nav);
+    if (nav === 'appointments') void loadClientAppointments();
+    if (nav === 'messages') void loadClientConversations();
   }
 
   function moveDeck(direction: 'previous' | 'next') {
@@ -1742,7 +1814,7 @@ function App() {
 
   function openAppointmentBooking() {
     if (!clientSession) {
-      openClientAuth('booking');
+      openDiscovery();
       return;
     }
     if (connectedProfessionals.length === 0) {
@@ -1965,13 +2037,21 @@ function App() {
           activeNav={activeClientNav}
           booking={booking}
           appointments={clientAppointments}
+          conversations={clientConversations}
           connectedProfessionals={connectedProfessionals}
           clientSession={clientSession}
           isDemo={false}
+          isListening={isListening}
           onBookAppointment={openAppointmentBooking}
           onBookProfessional={(profile) => startBooking(profile)}
           onCancelRequest={cancelAppointmentRequest}
+          onCreateAccount={() => openClientAuth('default', 'signup')}
+          onMic={startVoiceSearch}
           onMessageAppointment={sendClientAppointmentMessage}
+          onOpenMessages={() => {
+            setActiveClientNav('messages');
+            void loadClientConversations();
+          }}
           onOpenProfessional={(profile) => {
             setSubmittedQuery(profile.name);
             setQuery(profile.name);
@@ -1982,12 +2062,17 @@ function App() {
             setActiveClientNav(null);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
+          onSearch={submitSearch}
+          onSignIn={() => openClientAuth('default', 'signin')}
           onDeleteAccount={() => setDeleteAccountOpen(true)}
           onSignOut={signOutClient}
           notifications={clientNotifications}
+          query={query}
           savedProfiles={allProfessionals.filter((profile) =>
             savedIds.includes(profile.id),
           )}
+          setQuery={setQuery}
+          voiceMessage={voiceMessage}
         />
       ) : (
         <>
@@ -2054,6 +2139,7 @@ function App() {
       )}
       {authModalOpen ? (
         <ClientAuthModal
+          initialMode={authInitialMode}
           intent={authIntent}
           onClose={() => setAuthModalOpen(false)}
           onComplete={handleClientAuth}
@@ -2628,15 +2714,17 @@ function InviteLanding({
 }
 
 function ClientAuthModal({
+  initialMode,
   intent,
   onClose,
   onComplete,
 }: {
+  initialMode: 'signup' | 'signin';
   intent: ClientAuthIntent;
   onClose: () => void;
   onComplete: (session: ClientSession, createdAccount?: boolean) => void;
 }) {
-  const [mode, setMode] = useState<'signup' | 'signin'>('signup');
+  const [mode, setMode] = useState<'signup' | 'signin'>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -4794,15 +4882,15 @@ function ClientFooter({
   const items: Array<{
     key: Extract<
       ClientNavKey,
-      'appointments' | 'my-pros' | 'products' | 'hair-tips'
+      'appointments' | 'my-pros' | 'messages' | 'products'
     >;
     label: string;
     icon: typeof CalendarDays;
   }> = [
     { key: 'appointments', label: 'Appointments', icon: CalendarDays },
-    { key: 'my-pros', label: 'My Pros', icon: Star },
+    { key: 'my-pros', label: 'My Pros', icon: UsersRound },
+    { key: 'messages', label: 'Messages', icon: MessageCircle },
     { key: 'products', label: 'Products', icon: ShoppingBag },
-    { key: 'hair-tips', label: 'Hair Tips', icon: Lightbulb },
   ];
 
   return (
@@ -4841,7 +4929,9 @@ function ClientNotificationSheet({
   onOpenAppointments: () => void;
   onOpenNotification: (notification: ClientNotification) => void;
 }) {
-  const unreadCount = notifications.filter((notification) => !notification.readAt).length;
+  const unreadCount = notifications.filter(
+    (notification) => !notification.readAt,
+  ).length;
   return (
     <div
       className="fixed inset-0 z-[80] bg-black/45 px-4 pt-20"
@@ -4909,8 +4999,8 @@ function ClientNotificationSheet({
             <Bell className="text-[#f4c430]" size={24} />
             <p className="mt-3 font-black">No recent notifications.</p>
             <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
-              Frizi will only show real appointment updates, messages and eligible
-              promo alerts here.
+              Frizi will only show real appointment updates, messages and
+              eligible promo alerts here.
             </p>
             <button
               className="mt-4 w-full rounded-2xl border border-white/15 px-4 py-3 text-sm font-black text-white"
@@ -4935,43 +5025,63 @@ function ClientNavScreen({
   activeNav,
   appointments,
   booking,
+  conversations,
   connectedProfessionals,
   clientSession,
+  isListening,
   isDemo,
   onBookAppointment,
   onBookProfessional,
   onCancelRequest,
+  onCreateAccount,
+  onMic,
   onMessageAppointment,
+  onOpenMessages,
   onDeleteAccount,
   onOpenProfessional,
+  onSearch,
+  onSignIn,
   onSignOut,
   notifications,
+  query,
   savedProfiles,
+  setQuery,
+  voiceMessage,
 }: {
   activeNav: ClientNavKey;
   appointments: BookingRequest[];
   booking: BookingRequest | null;
+  conversations: ClientConversation[];
   connectedProfessionals: Professional[];
   clientSession: ClientSession | null;
+  isListening: boolean;
   isDemo: boolean;
   onBookAppointment: () => void;
   onBookProfessional: (profile: Professional) => void;
   onCancelRequest: (appointmentId: string) => Promise<void>;
+  onCreateAccount: () => void;
+  onMic: () => void;
   onMessageAppointment: (
     appointment: BookingRequest,
     body: string,
   ) => Promise<void>;
+  onOpenMessages: () => void;
   onDeleteAccount: () => void;
   onOpenProfessional: (profile: Professional) => void;
+  onSearch: (nextQuery?: string) => void;
+  onSignIn: () => void;
   onSignOut: () => void;
   notifications: ClientNotification[];
+  query: string;
   savedProfiles: Professional[];
+  setQuery: (value: string) => void;
+  voiceMessage: string;
 }) {
   const titleMap: Record<ClientNavKey, string> = {
     appointments: 'Appointments',
     'my-pros': 'My Pros',
+    messages: 'Messages',
     products: 'Products',
-    'hair-tips': 'Hair Tips',
     'hair-profile': 'My Hair Profile',
     settings: 'Settings',
   };
@@ -4983,29 +5093,48 @@ function ClientNavScreen({
         <AppointmentsPanel
           appointments={appointments}
           booking={booking}
+          clientSession={clientSession}
           connectedProfessionals={connectedProfessionals}
+          isListening={isListening}
           isDemo={isDemo}
+          onMic={onMic}
           onCancelRequest={onCancelRequest}
           onMessageAppointment={onMessageAppointment}
           onBookAppointment={onBookAppointment}
+          onSearch={onSearch}
+          query={query}
+          setQuery={setQuery}
+          voiceMessage={voiceMessage}
         />
       ) : null}
       {activeNav === 'my-pros' ? (
         <MyProsPanel
+          clientSession={clientSession}
           connectedProfiles={connectedProfessionals}
+          isListening={isListening}
           savedProfiles={savedProfiles}
           notifications={notifications}
           onBookProfessional={onBookProfessional}
+          onMic={onMic}
+          onOpenMessages={onOpenMessages}
           onOpenProfessional={onOpenProfessional}
+          onSearch={onSearch}
+          query={query}
+          setQuery={setQuery}
+          voiceMessage={voiceMessage}
+        />
+      ) : null}
+      {activeNav === 'messages' ? (
+        <MessagesPanel
+          clientSession={clientSession}
+          conversations={conversations}
+          onCreateAccount={onCreateAccount}
+          onSignIn={onSignIn}
         />
       ) : null}
       {activeNav === 'products' ? <ProductsPanel isDemo={isDemo} /> : null}
-      {activeNav === 'hair-tips' ? <HairTipsPanel /> : null}
       {activeNav === 'hair-profile' ? (
-        <ClientPassportPanel
-          clientSession={clientSession}
-          isDemo={isDemo}
-        />
+        <ClientPassportPanel clientSession={clientSession} isDemo={isDemo} />
       ) : null}
       {activeNav === 'settings' ? (
         <ClientSettingsPanel
@@ -5014,9 +5143,7 @@ function ClientNavScreen({
           onSignOut={onSignOut}
         />
       ) : null}
-      {clientSession ? (
-        <ClientPushPermissionPrompt />
-      ) : null}
+      {clientSession ? <ClientPushPermissionPrompt /> : null}
     </section>
   );
 }
@@ -5094,7 +5221,11 @@ function ClientPushPermissionPrompt() {
         <span className="mt-1 block text-sm font-semibold leading-5 text-white/62">
           Get notifications for appointment updates and messages from your Pros.
         </span>
-        {message ? <em className="mt-1 block text-xs font-bold text-[#f4c430]">{message}</em> : null}
+        {message ? (
+          <em className="mt-1 block text-xs font-bold text-[#f4c430]">
+            {message}
+          </em>
+        ) : null}
       </div>
       <div className="col-span-2 grid gap-2 sm:col-start-2 sm:col-end-3 sm:grid-cols-2">
         {/* prettier-ignore */}
@@ -5117,21 +5248,35 @@ function ClientPushPermissionPrompt() {
 function AppointmentsPanel({
   appointments,
   booking,
+  clientSession,
   connectedProfessionals,
+  isListening,
+  onMic,
   onCancelRequest,
   onBookAppointment,
   onMessageAppointment,
+  onSearch,
+  query,
+  setQuery,
+  voiceMessage,
 }: {
   appointments: BookingRequest[];
   booking: BookingRequest | null;
+  clientSession: ClientSession | null;
   connectedProfessionals: Professional[];
   isDemo: boolean;
+  isListening: boolean;
+  onMic: () => void;
   onCancelRequest: (appointmentId: string) => Promise<void>;
   onBookAppointment: () => void;
   onMessageAppointment: (
     appointment: BookingRequest,
     body: string,
   ) => Promise<void>;
+  onSearch: (nextQuery?: string) => void;
+  query: string;
+  setQuery: (value: string) => void;
+  voiceMessage: string;
 }) {
   const [detailAppointment, setDetailAppointment] =
     useState<BookingRequest | null>(null);
@@ -5165,6 +5310,29 @@ function AppointmentsPanel({
 
   return (
     <div className="mt-5 space-y-4">
+      {!clientSession ? (
+        <section className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <Search className="text-[#f4c430]" size={28} />
+          <h2 className="mt-3 text-2xl font-black">
+            Find your next appointment
+          </h2>
+          <p className="mt-2 leading-7 text-white/68">
+            Search for a local hair professional to book an appointment.
+          </p>
+          <div className="mt-4">
+            <SearchInputWithSuggestions
+              compact
+              id="frizi-appointments-search"
+              isListening={isListening}
+              onMic={onMic}
+              onSubmit={onSearch}
+              query={query}
+              setQuery={setQuery}
+              voiceMessage={voiceMessage}
+            />
+          </div>
+        </section>
+      ) : null}
       <button
         className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f4c430] px-5 text-base font-black text-black"
         type="button"
@@ -5534,9 +5702,7 @@ function ClientAppointmentMessageSheet({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-black text-[#f4c430]">Message</p>
-            <h2 className="mt-1 text-2xl font-black">
-              {booking.professional}
-            </h2>
+            <h2 className="mt-1 text-2xl font-black">{booking.professional}</h2>
             <p className="mt-1 text-sm font-semibold text-white/58">
               {booking.service} · {formatAppointmentDateLong(booking)}
             </p>
@@ -5588,17 +5754,33 @@ function ClientAppointmentMessageSheet({
 }
 
 function MyProsPanel({
+  clientSession,
   connectedProfiles,
+  isListening,
   notifications,
   onBookProfessional,
+  onMic,
+  onOpenMessages,
   onOpenProfessional,
+  onSearch,
+  query,
   savedProfiles,
+  setQuery,
+  voiceMessage,
 }: {
+  clientSession: ClientSession | null;
   connectedProfiles: Professional[];
+  isListening: boolean;
   notifications: ClientNotification[];
   onBookProfessional: (profile: Professional) => void;
+  onMic: () => void;
+  onOpenMessages: () => void;
   onOpenProfessional: (profile: Professional) => void;
+  onSearch: (nextQuery?: string) => void;
+  query: string;
   savedProfiles: Professional[];
+  setQuery: (value: string) => void;
+  voiceMessage: string;
 }) {
   const connectedIds = new Set(connectedProfiles.map((profile) => profile.id));
   const unreadByProfessional = new Map<string, number>();
@@ -5623,15 +5805,40 @@ function MyProsPanel({
 
   return (
     <div className="mt-5 grid gap-3">
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">
+          {clientSession ? 'Search your Pros' : 'Find a Pro'}
+        </h2>
+        <p className="mt-2 text-sm font-semibold leading-6 text-white/62">
+          {clientSession
+            ? 'Search your saved Pros or find another local professional.'
+            : "Search for Pros now. Create a free account when you're ready to save your favourites."}
+        </p>
+        <div className="mt-4">
+          <SearchInputWithSuggestions
+            compact
+            id="frizi-my-pros-search"
+            isListening={isListening}
+            onMic={onMic}
+            onSubmit={onSearch}
+            query={query}
+            setQuery={setQuery}
+            voiceMessage={voiceMessage}
+          />
+        </div>
+      </div>
       {profiles.length === 0 ? (
         <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
-          <User className="text-[#f4c430]" size={30} />
+          <UsersRound className="text-[#f4c430]" size={30} />
           <h2 className="mt-4 text-2xl font-black">
-            No professionals yet
+            {clientSession
+              ? 'No Pros yet'
+              : "You don't have any saved Pros yet."}
           </h2>
           <p className="mt-2 leading-7 text-white/68">
-            Connect with a professional through their QR code, or tap the star
-            on a profile hero to keep them here.
+            {clientSession
+              ? 'Connect with a professional through their QR code, or tap the star on a profile hero to keep them here.'
+              : 'Search local professionals and sign in when you want to save or connect with one.'}
           </p>
         </div>
       ) : (
@@ -5655,7 +5862,9 @@ function MyProsPanel({
                   alt=""
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-xl font-black">{profile.name}</span>
+                  <span className="block text-xl font-black">
+                    {profile.name}
+                  </span>
                   <span className="block text-sm font-semibold text-white/60">
                     {profile.role} · {profile.neighborhood}
                   </span>
@@ -5666,7 +5875,7 @@ function MyProsPanel({
               </button>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {unreadCount ? (
-                  <span className="rounded-full border border-[#f4c430]/35 bg-[#f4c430]/12 px-3 py-1 text-xs font-black text-[#f4c430]">
+                  <span className="rounded-full border border-[#f4c430]/35 bg-[#f4c430] px-3 py-1 text-xs font-black text-black">
                     {unreadCount} new
                   </span>
                 ) : null}
@@ -5675,14 +5884,30 @@ function MyProsPanel({
                     Deal
                   </span>
                 ) : null}
+                <button
+                  className="min-h-10 rounded-2xl border border-white/15 px-4 text-sm font-black text-white"
+                  type="button"
+                  onClick={() => onOpenProfessional(profile)}
+                >
+                  View profile
+                </button>
                 {connected ? (
-                  <button
-                    className="ml-auto min-h-10 rounded-2xl bg-[#f4c430] px-4 text-sm font-black text-black"
-                    type="button"
-                    onClick={() => onBookProfessional(profile)}
-                  >
-                    Book appointment
-                  </button>
+                  <>
+                    <button
+                      className="min-h-10 rounded-2xl bg-[#f4c430] px-4 text-sm font-black text-black"
+                      type="button"
+                      onClick={() => onBookProfessional(profile)}
+                    >
+                      Book
+                    </button>
+                    <button
+                      className="min-h-10 rounded-2xl border border-white/15 px-4 text-sm font-black text-white"
+                      type="button"
+                      onClick={onOpenMessages}
+                    >
+                      Message
+                    </button>
+                  </>
                 ) : null}
               </div>
             </article>
@@ -5693,34 +5918,184 @@ function MyProsPanel({
   );
 }
 
-function HairTipsPanel() {
-  return (
-    <div className="mt-5 overflow-hidden rounded-[28px] border border-white/10 bg-[#151519] p-6">
-      <Lightbulb className="text-[#f4c430]" size={32} />
-      <p className="mt-4 text-sm font-black uppercase tracking-[0.18em] text-[#f4c430]">
-        Coming Soon
-      </p>
-      <h2 className="mt-2 text-3xl font-black">Hair Tips</h2>
-      <p className="mt-3 max-w-xl leading-7 text-white/68">
-        Get free hair tips from Frizi Pros. Ask questions, learn from hair
-        professionals, and discover advice for your hair type, style and
-        routine.
-      </p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        {[
-          'How do I stop my hair from breaking?',
-          'What products work for curly hair?',
-          'How often should I wash colour-treated hair?',
-          'How do I style thin hair?',
-        ].map((question) => (
-          <article
-            className="rounded-2xl border border-white/10 bg-white/[0.05] p-4 text-sm font-bold text-white/70"
-            key={question}
+function MessagesPanel({
+  clientSession,
+  conversations,
+  onCreateAccount,
+  onSignIn,
+}: {
+  clientSession: ClientSession | null;
+  conversations: ClientConversation[];
+  onCreateAccount: () => void;
+  onSignIn: () => void;
+}) {
+  const [openConversation, setOpenConversation] =
+    useState<ClientConversation | null>(null);
+
+  if (!clientSession) {
+    return (
+      <div className="mt-5 rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <MessageCircle className="text-[#f4c430]" size={32} />
+        <h2 className="mt-4 text-2xl font-black">Messages</h2>
+        <p className="mt-2 leading-7 text-white/68">
+          Sign in to see your conversations with your Pros.
+        </p>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <button
+            className="min-h-12 rounded-2xl bg-[#f4c430] px-5 font-black text-black"
+            type="button"
+            onClick={onSignIn}
           >
-            {question}
-          </article>
-        ))}
+            Sign in
+          </button>
+          <button
+            className="min-h-12 rounded-2xl border border-white/15 px-5 font-black text-white"
+            type="button"
+            onClick={onCreateAccount}
+          >
+            Create free account
+          </button>
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="mt-5 grid gap-3">
+      {conversations.length ? (
+        conversations.map((conversation) => (
+          <button
+            className="flex w-full items-center gap-4 rounded-[24px] border border-white/10 bg-[#151519] p-4 text-left"
+            key={conversation.id}
+            type="button"
+            onClick={() => setOpenConversation(conversation)}
+          >
+            {conversation.avatarUrl ? (
+              <img
+                className="h-16 w-16 shrink-0 rounded-2xl object-cover"
+                src={conversation.avatarUrl}
+                alt=""
+              />
+            ) : (
+              <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-[#f4c430] text-lg font-black text-black">
+                {conversation.avatarFallback}
+              </span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="flex items-start justify-between gap-3">
+                <strong className="block truncate text-xl">
+                  {conversation.professionalName}
+                </strong>
+                {conversation.latestMessageAt ? (
+                  <span className="shrink-0 text-xs font-black text-white/42">
+                    {formatNotificationDate(conversation.latestMessageAt)}
+                  </span>
+                ) : null}
+              </span>
+              {conversation.studioName ? (
+                <span className="mt-0.5 block truncate text-xs font-black text-[#f4c430]">
+                  {conversation.studioName}
+                </span>
+              ) : null}
+              <span className="mt-1 block truncate text-sm font-semibold text-white/62">
+                {conversation.latestMessage}
+              </span>
+            </span>
+            {conversation.unreadCount > 0 ? (
+              <span
+                aria-label={`${conversation.unreadCount} unread messages`}
+                className="grid h-7 min-w-7 shrink-0 place-items-center rounded-full bg-[#f4c430] px-2 text-xs font-black text-black"
+              >
+                {conversation.unreadCount > 99
+                  ? '99+'
+                  : conversation.unreadCount}
+              </span>
+            ) : null}
+          </button>
+        ))
+      ) : (
+        <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+          <MessageCircle className="text-[#f4c430]" size={32} />
+          <h2 className="mt-4 text-2xl font-black">No messages yet.</h2>
+          <p className="mt-2 leading-7 text-white/68">
+            When you message a Pro or they message you, the conversation will
+            appear here.
+          </p>
+        </div>
+      )}
+      {openConversation ? (
+        <ConversationPreviewSheet
+          conversation={openConversation}
+          onClose={() => setOpenConversation(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ConversationPreviewSheet({
+  conversation,
+  onClose,
+}: {
+  conversation: ClientConversation;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-end bg-black/58 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6"
+      onClick={onClose}
+    >
+      <section
+        aria-modal="true"
+        className="w-full rounded-[28px] border border-white/12 bg-[#151519] p-5 shadow-2xl shadow-black/60 sm:max-w-md"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            {conversation.avatarUrl ? (
+              <img
+                className="h-14 w-14 shrink-0 rounded-2xl object-cover"
+                src={conversation.avatarUrl}
+                alt=""
+              />
+            ) : (
+              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#f4c430] font-black text-black">
+                {conversation.avatarFallback}
+              </span>
+            )}
+            <div className="min-w-0">
+              <h2 className="truncate text-2xl font-black">
+                {conversation.professionalName}
+              </h2>
+              {conversation.studioName ? (
+                <p className="truncate text-sm font-semibold text-white/58">
+                  {conversation.studioName}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <button
+            aria-label="Close conversation"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/12 bg-white/[0.05]"
+            type="button"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mt-5 rounded-2xl border border-white/10 bg-black/24 p-4">
+          <p className="text-xs font-black text-[#f4c430]">Latest message</p>
+          <p className="mt-2 leading-7 text-white/78">
+            {conversation.latestMessage}
+          </p>
+          {conversation.latestMessageAt ? (
+            <p className="mt-2 text-xs font-semibold text-white/45">
+              {formatNotificationDate(conversation.latestMessageAt)}
+            </p>
+          ) : null}
+        </div>
+      </section>
     </div>
   );
 }
@@ -5772,10 +6147,14 @@ function ClientSettingsPanel({
           .maybeSingle();
         if (error) throw error;
         if (!client || cancelled) return;
-        const notifications =
-          (client.notification_preferences || {}) as Record<string, unknown>;
-        const search =
-          (client.search_preferences || {}) as Record<string, unknown>;
+        const notifications = (client.notification_preferences || {}) as Record<
+          string,
+          unknown
+        >;
+        const search = (client.search_preferences || {}) as Record<
+          string,
+          unknown
+        >;
         setClientId(String(client.id));
         setAppointmentNotifications(
           notifications.appointment_notifications_enabled !== false,
@@ -5802,9 +6181,7 @@ function ClientSettingsPanel({
       } catch (error) {
         if (!cancelled)
           setMessage(
-            error instanceof Error
-              ? error.message
-              : 'Could not load settings.',
+            error instanceof Error ? error.message : 'Could not load settings.',
           );
       }
     }
@@ -5925,7 +6302,9 @@ function ClientSettingsPanel({
                 {pushEnabled ? 'Enabled' : 'Not enabled'}
               </span>
             </div>
-            {!pushEnabled && pushSupportedLabel && pushPermission !== 'denied' ? (
+            {!pushEnabled &&
+            pushSupportedLabel &&
+            pushPermission !== 'denied' ? (
               /* prettier-ignore */
               <button className="friziGoldButton mt-3 min-h-11 w-full rounded-2xl px-4 text-sm font-black" type="button" disabled={pushBusy} onClick={() => void enablePushFromSettings()}>
                 {pushBusy ? 'Enabling...' : 'Enable push notifications'}
@@ -6968,52 +7347,52 @@ function ProductionClientPassportPanel({
                 <X size={18} />
               </button>
             </div>
-        {clientSession && passport ? (
-          <>
-            <p className="mt-2 leading-7 text-white/68">
-              Share this with a professional so they can request access to your
-              hair profile. You can rotate or revoke this QR any time.
-            </p>
-            <div className="mx-auto mt-5 max-w-xs rounded-3xl bg-white p-4">
-              <img
-                className="aspect-square w-full"
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=720x720&margin=18&data=${encodeURIComponent(passport.passportUrl)}`}
-                alt="Client hair passport QR code"
-              />
-            </div>
-            <p className="mt-4 break-all rounded-2xl bg-black/30 p-3 text-sm font-semibold text-white/62">
-              {passport.passportUrl}
-            </p>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button
-                className="min-h-12 rounded-2xl border border-white/15 px-4 text-sm font-black text-white disabled:opacity-50"
-                type="button"
-                disabled={passportBusy}
-                onClick={() => void updatePassport('rotate')}
-              >
-                Rotate QR
-              </button>
-              <button
-                className="min-h-12 rounded-2xl border border-red-300/30 px-4 text-sm font-black text-red-100 disabled:opacity-50"
-                type="button"
-                disabled={passportBusy}
-                onClick={() => void updatePassport('revoke')}
-              >
-                Revoke
-              </button>
-            </div>
-            <p className="mt-3 text-xs font-semibold leading-5 text-white/45">
-              Professional scan access still requires the Pro-side passport
-              acceptance screen before private profile details are shown.
-            </p>
-          </>
-        ) : (
-          <p className="mt-2 leading-7 text-white/68">
-            {clientSession
-              ? 'Preparing your secure passport QR...'
-              : 'Sign in to prepare your client hair passport.'}
-          </p>
-        )}
+            {clientSession && passport ? (
+              <>
+                <p className="mt-2 leading-7 text-white/68">
+                  Share this with a professional so they can request access to
+                  your hair profile. You can rotate or revoke this QR any time.
+                </p>
+                <div className="mx-auto mt-5 max-w-xs rounded-3xl bg-white p-4">
+                  <img
+                    className="aspect-square w-full"
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=720x720&margin=18&data=${encodeURIComponent(passport.passportUrl)}`}
+                    alt="Client hair passport QR code"
+                  />
+                </div>
+                <p className="mt-4 break-all rounded-2xl bg-black/30 p-3 text-sm font-semibold text-white/62">
+                  {passport.passportUrl}
+                </p>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <button
+                    className="min-h-12 rounded-2xl border border-white/15 px-4 text-sm font-black text-white disabled:opacity-50"
+                    type="button"
+                    disabled={passportBusy}
+                    onClick={() => void updatePassport('rotate')}
+                  >
+                    Rotate QR
+                  </button>
+                  <button
+                    className="min-h-12 rounded-2xl border border-red-300/30 px-4 text-sm font-black text-red-100 disabled:opacity-50"
+                    type="button"
+                    disabled={passportBusy}
+                    onClick={() => void updatePassport('revoke')}
+                  >
+                    Revoke
+                  </button>
+                </div>
+                <p className="mt-3 text-xs font-semibold leading-5 text-white/45">
+                  Professional scan access still requires the Pro-side passport
+                  acceptance screen before private profile details are shown.
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 leading-7 text-white/68">
+                {clientSession
+                  ? 'Preparing your secure passport QR...'
+                  : 'Sign in to prepare your client hair passport.'}
+              </p>
+            )}
           </section>
         </div>
       ) : null}
@@ -7275,7 +7654,8 @@ function appointmentStartDate(booking: BookingRequest) {
 }
 
 function isAppointmentPast(booking: BookingRequest) {
-  const endSource = booking.scheduledEnd || booking.scheduledStart || booking.time;
+  const endSource =
+    booking.scheduledEnd || booking.scheduledStart || booking.time;
   const date = endSource ? new Date(endSource) : appointmentStartDate(booking);
   return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
 }

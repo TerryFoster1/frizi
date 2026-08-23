@@ -14,6 +14,23 @@ type MessagePayload = {
   professionalId?: string;
 };
 
+type ConversationMessageRow = {
+  id: string;
+  conversation_id: string;
+  sender_role: string | null;
+  body: string | null;
+  created_at: string | null;
+  read_at: string | null;
+};
+
+type ProfessionalInboxRow = {
+  id: string;
+  display_name: string | null;
+  studio_name: string | null;
+  profile_photo_url: string | null;
+  hero_photo_url: string | null;
+};
+
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
   response.statusCode = status;
   response.setHeader('Content-Type', 'application/json');
@@ -43,16 +60,27 @@ function bearerToken(request: IncomingMessage) {
 }
 
 function cleanUuid(value: unknown) {
-  const id = String(value || '').trim().replace(/^live-/, '');
+  const id = String(value || '')
+    .trim()
+    .replace(/^live-/, '');
   return /^[0-9a-f-]{36}$/i.test(id) ? id : '';
+}
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('');
 }
 
 export default async function handler(
   request: IncomingMessage & { body?: unknown },
   response: ServerResponse,
 ) {
-  if (request.method !== 'POST') {
-    response.setHeader('Allow', 'POST');
+  if (request.method !== 'POST' && request.method !== 'GET') {
+    response.setHeader('Allow', 'GET, POST');
     return sendJson(response, 405, { error: 'Method not allowed.' });
   }
 
@@ -81,6 +109,120 @@ export default async function handler(
       return sendJson(response, 401, { error: 'Sign in before messaging.' });
     const user = userResult.data.user;
 
+    const { data: profile, error: profileError } = await supabase
+      .from('frizi_profiles')
+      .select('id, display_name, email')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile)
+      return sendJson(response, 404, {
+        error: 'Client profile was not found.',
+      });
+
+    const { data: client, error: clientError } = await supabase
+      .from('frizi_clients')
+      .select('id, preferred_name, first_name, last_name')
+      .eq('profile_id', profile.id)
+      .maybeSingle();
+    if (clientError) throw clientError;
+    if (!client)
+      return sendJson(response, 404, {
+        error: 'Client profile was not found.',
+      });
+
+    if (request.method === 'GET') {
+      const { data: conversations, error: conversationsError } = await supabase
+        .from('frizi_conversations')
+        .select('id, professional_id, status, updated_at')
+        .eq('client_id', client.id)
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false })
+        .limit(50);
+      if (conversationsError) throw conversationsError;
+
+      const conversationRows = conversations || [];
+      const conversationIds = conversationRows.map((conversation) =>
+        String(conversation.id),
+      );
+      const professionalIds = conversationRows.map((conversation) =>
+        String(conversation.professional_id),
+      );
+      const [{ data: professionals }, { data: messages }] = await Promise.all([
+        professionalIds.length
+          ? supabase
+              .from('frizi_professionals')
+              .select(
+                'id, display_name, studio_name, profile_photo_url, hero_photo_url',
+              )
+              .in('id', professionalIds)
+          : Promise.resolve({ data: [] }),
+        conversationIds.length
+          ? supabase
+              .from('frizi_messages')
+              .select(
+                'id, conversation_id, sender_role, body, created_at, read_at',
+              )
+              .in('conversation_id', conversationIds)
+              .order('created_at', { ascending: false })
+              .limit(200)
+          : Promise.resolve({ data: [] }),
+      ]);
+
+      const professionalRows = (professionals || []) as ProfessionalInboxRow[];
+      const messageRows = (messages || []) as ConversationMessageRow[];
+      const professionalsById = new Map<string, ProfessionalInboxRow>(
+        professionalRows.map((professional) => [
+          String(professional.id),
+          professional,
+        ]),
+      );
+      const messagesByConversation = new Map<
+        string,
+        ConversationMessageRow[]
+      >();
+      messageRows.forEach((message) => {
+        const conversationId = String(message.conversation_id);
+        messagesByConversation.set(conversationId, [
+          ...(messagesByConversation.get(conversationId) || []),
+          message,
+        ]);
+      });
+
+      return sendJson(response, 200, {
+        conversations: conversationRows.map((conversation) => {
+          const professional = professionalsById.get(
+            String(conversation.professional_id),
+          );
+          const professionalName = String(
+            professional?.display_name || 'Frizi Pro',
+          );
+          const conversationMessages =
+            messagesByConversation.get(String(conversation.id)) || [];
+          const latestMessage = conversationMessages[0];
+          const unreadCount = conversationMessages.filter(
+            (message) =>
+              message.sender_role === 'professional' && !message.read_at,
+          ).length;
+          return {
+            id: conversation.id,
+            professionalId: conversation.professional_id,
+            professionalName,
+            studioName: professional?.studio_name || '',
+            avatarUrl:
+              professional?.profile_photo_url ||
+              professional?.hero_photo_url ||
+              '',
+            avatarFallback: initials(professionalName) || 'FP',
+            latestMessage: latestMessage?.body || 'No messages yet.',
+            latestMessageAt:
+              latestMessage?.created_at || conversation.updated_at || '',
+            unreadCount,
+          };
+        }),
+      });
+    }
+
     const payload = await readJson(request);
     const body = String(payload.body || '').trim();
     const professionalId = cleanUuid(payload.professionalId);
@@ -94,24 +236,6 @@ export default async function handler(
       return sendJson(response, 400, {
         error: 'Keep the message under 1,000 characters.',
       });
-
-    const { data: profile, error: profileError } = await supabase
-      .from('frizi_profiles')
-      .select('id, display_name, email')
-      .eq('auth_user_id', user.id)
-      .maybeSingle();
-    if (profileError) throw profileError;
-    if (!profile)
-      return sendJson(response, 404, { error: 'Client profile was not found.' });
-
-    const { data: client, error: clientError } = await supabase
-      .from('frizi_clients')
-      .select('id, preferred_name, first_name, last_name')
-      .eq('profile_id', profile.id)
-      .maybeSingle();
-    if (clientError) throw clientError;
-    if (!client)
-      return sendJson(response, 404, { error: 'Client profile was not found.' });
 
     if (appointmentId) {
       const { data: appointment, error: appointmentError } = await supabase
@@ -222,11 +346,19 @@ export default async function handler(
       : professional.frizi_profiles;
     const recipientUserId =
       professionalProfiles && typeof professionalProfiles === 'object'
-        ? String((professionalProfiles as Record<string, unknown>).auth_user_id || '')
+        ? String(
+            (professionalProfiles as Record<string, unknown>).auth_user_id ||
+              '',
+          )
         : '';
     const clientName =
       [client.first_name, client.last_name].filter(Boolean).join(' ') ||
-      String(client.preferred_name || profile.display_name || user.email || 'A client');
+      String(
+        client.preferred_name ||
+          profile.display_name ||
+          user.email ||
+          'A client',
+      );
 
     if (recipientUserId) {
       const { data: notification, error: notificationError } = await supabase
@@ -257,7 +389,8 @@ export default async function handler(
         .select('id')
         .single();
       if (notificationError) throw notificationError;
-      if (notification?.id) await dispatchNotificationPush(supabase, String(notification.id));
+      if (notification?.id)
+        await dispatchNotificationPush(supabase, String(notification.id));
     }
 
     return sendJson(response, 200, {
@@ -267,9 +400,7 @@ export default async function handler(
   } catch (error) {
     return sendJson(response, 500, {
       error:
-        error instanceof Error
-          ? error.message
-          : 'Message could not be sent.',
+        error instanceof Error ? error.message : 'Message could not be sent.',
     });
   }
 }
