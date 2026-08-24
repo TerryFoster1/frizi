@@ -531,7 +531,7 @@ async function loadConnectedProfessionals(
     supabase
       .from('frizi_professionals')
       .select(
-        'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status, booking_settings',
+        'id, profile_id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status, booking_settings',
       )
       .in('id', professionalIds),
     supabase

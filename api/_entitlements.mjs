@@ -33,8 +33,12 @@ export function resolveProfessionalCapabilities(input = {}) {
 
 export function isPubliclyBookableProfessional(professional) {
   const capabilities = resolveProfessionalCapabilities(professional || {});
+  const hasProfileIdentity =
+    !Object.prototype.hasOwnProperty.call(professional || {}, 'profile_id') ||
+    Boolean(professional.profile_id);
   return Boolean(
     professional &&
+      hasProfileIdentity &&
       professional.public_profile_status === 'published' &&
       professional.bookable &&
       capabilities.canAppearInDiscovery &&

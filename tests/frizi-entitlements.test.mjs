@@ -64,6 +64,22 @@ test('draft or non-bookable professionals do not become discoverable just becaus
   );
 });
 
+test('public discovery fails closed for professional rows without a linked profile identity', () => {
+  assert.equal(
+    isPubliclyBookableProfessional({
+      profile_id: null,
+      account_plan: 'pro_free',
+      public_profile_status: 'published',
+      bookable: true,
+    }),
+    false,
+  );
+  assert.match(appSource, /\.not\('profile_id', 'is', null\)/);
+  assert.match(appSource, /profile_id, display_name/);
+  assert.match(appointmentsEndpoint, /id, profile_id, display_name/);
+  assert.match(inviteEndpoint, /id, profile_id, display_name/);
+});
+
 test('Client discovery and SEO use capability eligibility instead of active subscription filtering', () => {
   assert.match(appSource, /resolveProfessionalCapabilities\(profile\)\.canAppearInDiscovery/);
   assert.doesNotMatch(appSource, /\.in\('subscription_status', \['active', 'trialing'\]\)/);
@@ -87,6 +103,9 @@ test('Pro Free booking exposes a basic appointment path without public prices', 
   assert.match(appointmentsEndpoint, /isBasicBookingServiceId/);
   assert.match(appointmentsEndpoint, /service_id: service\.id\.startsWith\('basic:'\) \? null : service\.id/);
   assert.match(inviteEndpoint, /basicBookingService/);
+  assert.doesNotMatch(appointmentsEndpoint, /payment_intent|PaymentIntent/);
+  assert.match(appointmentsEndpoint, /paymentRequiredCents > 0/);
+  assert.match(appSource, /service: String\(appointment\.service \|\| 'Appointment'\)/);
 });
 
 test('client search expands common service and specialty synonyms', () => {

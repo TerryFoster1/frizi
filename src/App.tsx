@@ -588,6 +588,7 @@ const clientExamplePhotos = [] as ClientPhoto[];
 
 type LiveProfessionalRow = {
   id: string;
+  profile_id?: string | null;
   display_name: string;
   professional_title?: string | null;
   studio_name: string | null;
@@ -796,10 +797,11 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
   const { data: liveProfiles, error: profileError } = await supabase
     .from('frizi_professionals')
     .select(
-      'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, booking_settings, account_plan, subscription_status',
+      'id, profile_id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, booking_settings, account_plan, subscription_status',
     )
     .eq('public_profile_status', 'published')
     .eq('bookable', true)
+    .not('profile_id', 'is', null)
     .order('updated_at', { ascending: false })
     .limit(12);
 
