@@ -42,6 +42,7 @@ type ProfessionalRow = {
   id: string;
   profile_id?: string | null;
   display_name: string;
+  professional_title?: string | null;
   studio_name?: string | null;
   bio?: string | null;
   specialties?: string[] | null;
@@ -69,6 +70,7 @@ type LocationRow = {
 
 type RelationshipRow = {
   professional_id: string;
+  source?: string | null;
 };
 
 type ProfileIdentityRow = {
@@ -117,6 +119,12 @@ function normalizeProfessionalId(value: string) {
 
 function isActiveSubscription(status: string | null | undefined) {
   return status === 'active' || status === 'trialing';
+}
+
+function cleanProfessionalTitle(value?: string | null) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || /^other$/i.test(trimmed)) return '';
+  return trimmed;
 }
 
 function addMinutes(date: Date, minutes: number) {
@@ -446,9 +454,10 @@ async function loadConnectedProfessionals(
 ) {
   const { data: relationships, error: relationshipError } = await supabase
     .from('frizi_client_professional_relationships')
-    .select('professional_id')
+    .select('professional_id, source')
     .eq('client_id', clientId)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .neq('source', 'saved');
 
   if (relationshipError) throw relationshipError;
   const professionalIds = Array.from(
@@ -471,7 +480,7 @@ async function loadConnectedProfessionals(
     supabase
       .from('frizi_professionals')
       .select(
-        'id, display_name, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, subscription_status, booking_settings',
+        'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, subscription_status, booking_settings',
       )
       .in('id', professionalIds),
     supabase
@@ -535,9 +544,10 @@ async function loadConnectedProfessionals(
         id: professional.id,
         name: professional.display_name,
         role:
-          professional.primary_specialty ||
+          cleanProfessionalTitle(professional.professional_title) ||
+          cleanProfessionalTitle(professional.primary_specialty) ||
           professional.specialties?.[0] ||
-          'Frizi professional',
+          '',
         studio: professional.studio_name || 'Independent professional',
         neighborhood: location
           ? `${location.city}, ${location.province}`
@@ -1005,7 +1015,11 @@ export default async function handler(
           client_id: client.id,
           professional_id: professional.id,
           status: 'active',
-          source: existingRelationship?.source || 'booking',
+          source:
+            existingRelationship?.source &&
+            existingRelationship.source !== 'saved'
+              ? existingRelationship.source
+              : 'booking',
           account_claimed_status: 'claimed',
           next_appointment_at: startsAt.toISOString(),
           last_service: service.name,

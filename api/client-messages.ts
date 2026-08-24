@@ -289,18 +289,6 @@ export default async function handler(
         return sendJson(response, 403, {
           error: 'This appointment is not available for messaging.',
         });
-    } else {
-      const { data: relationship, error: relationshipError } = await supabase
-        .from('frizi_client_professional_relationships')
-        .select('id')
-        .eq('client_id', client.id)
-        .eq('professional_id', professionalId)
-        .maybeSingle();
-      if (relationshipError) throw relationshipError;
-      if (!relationship)
-        return sendJson(response, 403, {
-          error: 'Connect with this professional before messaging.',
-        });
     }
 
     const { data: professional, error: professionalError } = await supabase
@@ -323,10 +311,20 @@ export default async function handler(
 
     let relationship = existingRelationship;
     if (relationship?.id) {
+      const nextSource =
+        relationship.source && relationship.source !== 'saved'
+          ? relationship.source
+          : appointmentId
+            ? 'booking'
+            : 'message';
       const { data: updatedRelationship, error: relationshipUpdateError } =
         await supabase
           .from('frizi_client_professional_relationships')
-          .update({ status: 'active', updated_at: new Date().toISOString() })
+          .update({
+            status: 'active',
+            source: nextSource,
+            updated_at: new Date().toISOString(),
+          })
           .eq('id', relationship.id)
           .select('id, source')
           .single();

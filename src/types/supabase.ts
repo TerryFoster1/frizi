@@ -52,6 +52,7 @@ export type FriziDatabase = {
           profile_id: string | null;
           public_slug: string | null;
           display_name: string;
+          professional_title: string | null;
           studio_name: string | null;
           salon_id: string | null;
           bio: string | null;

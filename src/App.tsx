@@ -239,7 +239,29 @@ type ClientNavKey =
   | 'settings';
 type AccountNavKey = 'appointments' | 'my-pros' | 'messages' | 'hair-profile';
 type ClientAuthIntent =
-  'default' | 'promo' | 'booking' | 'invite' | AccountNavKey;
+  'default' | 'promo' | 'booking' | 'invite' | 'save-pro' | AccountNavKey;
+
+type ClientHairProfile = {
+  color: string;
+  texture: string;
+  density: string;
+  length: string;
+  currentStyle: string;
+  goals: string;
+  products: string;
+  treatmentHistory: string;
+};
+
+const emptyClientHairProfile: ClientHairProfile = {
+  color: '',
+  texture: '',
+  density: '',
+  length: '',
+  currentStyle: '',
+  goals: '',
+  products: '',
+  treatmentHistory: '',
+};
 
 type FilterState = {
   distanceKm: number;
@@ -565,6 +587,7 @@ const clientExamplePhotos = [] as ClientPhoto[];
 type LiveProfessionalRow = {
   id: string;
   display_name: string;
+  professional_title?: string | null;
   studio_name: string | null;
   bio: string | null;
   profile_photo_url: string | null;
@@ -623,6 +646,44 @@ function formatServicePrice(service: LiveServiceRow) {
   return service.pricing_type === 'starting_at'
     ? `From $${dollars}`
     : `$${dollars}`;
+}
+
+function cleanPublicProfessionalTitle(value?: string | null) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || /^other$/i.test(trimmed)) return '';
+  return trimmed;
+}
+
+function publicProfessionalTitle(profile: {
+  professional_title?: string | null;
+  primary_specialty?: string | null;
+  specialties?: string[] | null;
+}) {
+  return (
+    cleanPublicProfessionalTitle(profile.professional_title) ||
+    cleanPublicProfessionalTitle(profile.primary_specialty) ||
+    cleanPublicProfessionalTitle(profile.specialties?.find(Boolean)) ||
+    ''
+  );
+}
+
+function normalizeClientHairProfile(value: unknown): ClientHairProfile {
+  const source =
+    value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    color: String(source.color || source.hairColor || ''),
+    texture: String(source.texture || source.hairTexture || ''),
+    density: String(source.density || ''),
+    length: String(source.length || source.hairLength || ''),
+    currentStyle: String(source.currentStyle || source.current_style || ''),
+    goals: String(source.goals || source.notes || ''),
+    products: String(source.products || source.productNotes || ''),
+    treatmentHistory: String(
+      source.treatmentHistory || source.treatment_history || '',
+    ),
+  };
 }
 
 function liveProfessionalSearchTerms(
@@ -706,7 +767,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
   const { data: liveProfiles, error: profileError } = await supabase
     .from('frizi_professionals')
     .select(
-      'id, display_name, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, booking_settings',
+      'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, booking_settings',
     )
     .eq('public_profile_status', 'published')
     .eq('bookable', true)
@@ -770,9 +831,10 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
           .filter((promotion) => promotion.created_by === profile.id)
           .map(publicPromotionFromRow)
           .find(Boolean) || null;
-      const specialties = profile.specialties?.length
-        ? profile.specialties
-        : [profile.primary_specialty || 'Hair services'];
+      const specialties = (profile.specialties || [])
+        .map(cleanPublicProfessionalTitle)
+        .filter(Boolean);
+      const role = publicProfessionalTitle(profile);
       if (!profileServices.length) return [];
       const bookingSlots = buildSlotsFromBookingSettings(
         profile.booking_settings,
@@ -791,7 +853,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
         {
           id: `live-${profile.id}`,
           name: profile.display_name,
-          role: profile.primary_specialty || 'Frizi professional',
+          role,
           studio: profile.studio_name || 'Independent professional',
           neighborhood: location
             ? `${location.city}, ${location.province}`
@@ -807,7 +869,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
           reviews: 0,
           repeatRate: 'New',
           nextAvailable: 'Request a time',
-          specialties,
+          specialties: specialties.length ? specialties : [],
           accommodations: ['Book online', 'Frizi verified profile'],
           searchTerms,
           whyMatch: profile.studio_name || 'Independent professional',
@@ -1202,8 +1264,6 @@ function App() {
   const [locationPromptOpen, setLocationPromptOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [saveProPromptProfile, setSaveProPromptProfile] =
-    useState<Professional | null>(null);
   const [, setSavingProfessionalId] = useState('');
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [clientNotifications, setClientNotifications] = useState<
@@ -1267,6 +1327,8 @@ function App() {
               intent: 'invite',
               route: authContext.returnPath,
             });
+          } else if (authContext?.intent === 'save-pro') {
+            setActiveClientNav(null);
           } else if (authContext && isAccountNavIntent(authContext.intent)) {
             setActiveClientNav(authContext.intent);
           }
@@ -1487,10 +1549,12 @@ function App() {
       setOpenBookingAfterAuth(true);
       setActiveClientNav(null);
       setBookingProfile(null);
+    } else if (authIntent === 'save-pro') {
+      setActiveClientNav(null);
     } else if (isAccountNavIntent(authIntent)) {
       setActiveClientNav(authIntent);
     } else {
-      setActiveClientNav('hair-profile');
+      setActiveClientNav(null);
     }
     setAuthIntent('default');
   }
@@ -1610,7 +1674,7 @@ function App() {
         pendingSaveProfessionalStorageKey,
         professionalId,
       );
-      setSaveProPromptProfile(profile);
+      openClientAuth('save-pro', 'signup');
       return;
     }
 
@@ -2341,20 +2405,6 @@ function App() {
           onDelete={deleteClientAccount}
         />
       ) : null}
-      {saveProPromptProfile ? (
-        <SaveProAuthPrompt
-          onClose={() => setSaveProPromptProfile(null)}
-          onCreateAccount={() => {
-            setSaveProPromptProfile(null);
-            openClientAuth('my-pros', 'signup');
-          }}
-          onSignIn={() => {
-            setSaveProPromptProfile(null);
-            openClientAuth('my-pros', 'signin');
-          }}
-          profile={saveProPromptProfile}
-        />
-      ) : null}
       {locationPromptOpen ? (
         <LocationPrompt onClose={() => setLocationPromptOpen(false)} />
       ) : null}
@@ -2910,77 +2960,36 @@ function InviteLanding({
   );
 }
 
-function SaveProAuthPrompt({
-  onClose,
-  onCreateAccount,
-  onSignIn,
-  profile,
-}: {
-  onClose: () => void;
-  onCreateAccount: () => void;
-  onSignIn: () => void;
-  profile: Professional;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-[80] flex items-end bg-black/70 p-3 sm:items-center sm:justify-center"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        aria-labelledby="save-pro-auth-title"
-        aria-modal="true"
-        className="w-full rounded-[28px] border border-white/10 bg-[#151519] p-5 text-white shadow-2xl sm:max-w-md"
-        role="dialog"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-black text-[#f4c430]">Save this Pro</p>
-            <h2 id="save-pro-auth-title" className="mt-1 text-2xl font-black">
-              Keep {profile.name} in My Pros
-            </h2>
-          </div>
-          <button
-            aria-label="Close save professional prompt"
-            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/[0.06]"
-            type="button"
-            onClick={onClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
-        <p className="mt-4 leading-7 text-white/70">
-          Create a free Frizi account so you can find them again, book
-          appointments and stay connected.
-        </p>
-        <div className="mt-5 space-y-3">
-          <button
-            className="flex min-h-14 w-full items-center justify-center rounded-2xl bg-[#f4c430] px-5 font-black text-black"
-            type="button"
-            onClick={onCreateAccount}
-          >
-            Create free account
-          </button>
-          <button
-            className="flex min-h-14 w-full items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] px-5 font-black text-white"
-            type="button"
-            onClick={onCreateAccount}
-          >
-            Continue with Google
-          </button>
-          <button
-            className="flex min-h-12 w-full items-center justify-center rounded-2xl px-5 font-black text-[#f4c430]"
-            type="button"
-            onClick={onSignIn}
-          >
-            Sign in
-          </button>
-        </div>
-      </section>
-    </div>
-  );
+function clientAuthContent(intent: ClientAuthIntent, mode: 'signup' | 'signin') {
+  if (intent === 'save-pro') {
+    return {
+      eyebrow: 'Save this Pro',
+      title: mode === 'signup' ? 'Create your free account' : 'Sign in to save this Pro',
+      description:
+        'Save this professional to My Pros so you can find them again later.',
+    };
+  }
+  if (intent === 'booking' || intent === 'promo') {
+    return {
+      eyebrow: 'Book on Frizi',
+      title: mode === 'signup' ? 'Create your free account' : 'Sign in to book',
+      description:
+        'Your booking context will stay saved while you sign in.',
+    };
+  }
+  if (intent === 'messages') {
+    return {
+      eyebrow: 'Message on Frizi',
+      title: mode === 'signup' ? 'Create your free account' : 'Sign in to message',
+      description:
+        'Message a professional through your Frizi account.',
+    };
+  }
+  return {
+    eyebrow: mode === 'signup' ? 'Free client account' : 'Welcome back',
+    title: mode === 'signup' ? 'Create your Frizi account' : 'Sign in to Frizi',
+    description: '',
+  };
 }
 
 function ClientAuthModal({
@@ -3466,6 +3475,7 @@ function ClientAuthModal({
     maxHeight:
       'calc(var(--frizi-client-auth-visible-height) - max(0.75rem, env(safe-area-inset-top)) - max(0.75rem, env(safe-area-inset-bottom)))',
   } as CSSProperties;
+  const content = clientAuthContent(intent, mode);
 
   return (
     <div
@@ -3482,15 +3492,18 @@ function ClientAuthModal({
         <div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
           <div>
             <p className="text-sm font-black text-[#f4c430]">
-              {mode === 'signup' ? 'Free client account' : 'Welcome back'}
+              {content.eyebrow}
             </p>
             <h2 className="mt-1 text-2xl font-black sm:text-3xl">
               {verificationEmail
                 ? 'Check your email'
-                : mode === 'signup'
-                  ? 'Create your Frizi account'
-                  : 'Sign in to Frizi'}
+                : content.title}
             </h2>
+            {!verificationEmail && content.description ? (
+              <p className="mt-2 max-w-xs text-sm font-semibold leading-5 text-white/62">
+                {content.description}
+              </p>
+            ) : null}
           </div>
           <button
             className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 text-white/70"
@@ -4488,16 +4501,18 @@ function DeckCard({
           <div className="flex items-center gap-4">
             <img
               alt={`${profile.name} profile`}
-              className="h-[88px] w-[88px] shrink-0 rounded-full border-4 border-white object-cover shadow-2xl shadow-black/45 sm:h-[104px] sm:w-[104px]"
+              className="h-[110px] w-[110px] shrink-0 rounded-full border-4 border-white object-cover shadow-2xl shadow-black/45 sm:h-[128px] sm:w-[128px]"
               src={profile.detailImage}
             />
             <div className="min-w-0 flex-1">
               <h2 className="text-[clamp(2rem,8.4vw,2.35rem)] font-black leading-[0.95] drop-shadow-2xl sm:text-5xl">
                 {profile.name}
               </h2>
-              <p className="mt-2 text-base font-black leading-5 text-white/92 drop-shadow sm:text-xl">
-                {profile.role}
-              </p>
+              {profile.role ? (
+                <p className="mt-2 text-base font-black leading-5 text-white/92 drop-shadow sm:text-xl">
+                  {profile.role}
+                </p>
+              ) : null}
               <p className="mt-1 inline-flex items-center gap-1 text-sm font-bold leading-5 text-white/86 drop-shadow">
                 <MapPin className="text-[#f4c430]" size={16} />
                 {profile.neighborhood || profile.distance}
@@ -4652,8 +4667,8 @@ function ProfileDetails({
               src={profile.promotion.imageUrl || FRIZI_PROMO_FALLBACK_IMAGE}
             />
             <div className="p-4">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-[#f4c430]">
-                New client offer
+              <p className="inline-flex items-center rounded-full bg-[#f4c430] px-3 py-1 text-xs font-black uppercase tracking-[0.08em] text-black">
+                {promoOfferLabel(profile.promotion) || 'New client offer'}
               </p>
               <p className="mt-2 text-lg font-black text-white">
                 {profile.promotion.headline}
@@ -4851,9 +4866,11 @@ function BookingCalendarPage({
               {profile.studio}
             </p>
             <h2 className="text-2xl font-black">{profile.name}</h2>
-            <p className="text-sm font-semibold text-white/58">
-              {profile.role}
-            </p>
+            {profile.role ? (
+              <p className="text-sm font-semibold text-white/58">
+                {profile.role}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -5213,9 +5230,11 @@ function ProfessionalPickerSheet({
                 <span className="block truncate text-lg font-black">
                   {profile.name}
                 </span>
-                <span className="block truncate text-sm font-semibold text-white/62">
-                  {profile.role}
-                </span>
+                {profile.role ? (
+                  <span className="block truncate text-sm font-semibold text-white/62">
+                    {profile.role}
+                  </span>
+                ) : null}
                 <span className="block truncate text-sm font-semibold text-white/48">
                   {profile.neighborhood}
                 </span>
@@ -5440,15 +5459,31 @@ function ClientNavScreen({
     'hair-profile': 'My Hair Profile',
     settings: 'Settings',
   };
+  const subtitleMap: Partial<Record<ClientNavKey, string>> = {
+    appointments: clientSession
+      ? ''
+      : 'Sign up for free to track your appointments and get reminders.',
+    'my-pros': 'Saved and connected professionals stay here.',
+    messages: 'Conversations and offers from your professionals.',
+    products: 'Recommended products will live here when commerce launches.',
+  };
 
   return (
     <section className="mx-auto min-h-screen max-w-4xl px-4 pb-28 pt-24 sm:px-6 lg:px-8">
-      <h1 className="text-4xl font-black">{titleMap[activeNav]}</h1>
+      <header className="mb-5">
+        <h1 className="text-[clamp(2rem,9vw,2.8rem)] font-black leading-none">
+          {titleMap[activeNav]}
+        </h1>
+        {subtitleMap[activeNav] ? (
+          <p className="mt-2 max-w-xl text-base font-semibold leading-6 text-white/62">
+            {subtitleMap[activeNav]}
+          </p>
+        ) : null}
+      </header>
       {activeNav === 'appointments' ? (
         <AppointmentsPanel
           appointments={appointments}
           booking={booking}
-          clientSession={clientSession}
           isListening={isListening}
           isDemo={isDemo}
           onMic={onMic}
@@ -5603,7 +5638,6 @@ function ClientPushPermissionPrompt() {
 function AppointmentsPanel({
   appointments,
   booking,
-  clientSession,
   isListening,
   onMic,
   onCancelRequest,
@@ -5615,7 +5649,6 @@ function AppointmentsPanel({
 }: {
   appointments: BookingRequest[];
   booking: BookingRequest | null;
-  clientSession: ClientSession | null;
   isDemo: boolean;
   isListening: boolean;
   onMic: () => void;
@@ -5657,11 +5690,6 @@ function AppointmentsPanel({
 
   return (
     <div className="mt-5 space-y-4">
-      {!clientSession ? (
-        <h2 className="text-2xl font-black leading-tight">
-          Sign up for free to track your appointments and get reminders
-        </h2>
-      ) : null}
       <SearchInputWithSuggestions
         compact
         id="frizi-appointments-search"
@@ -6193,7 +6221,7 @@ function MyProsPanel({
                     {profile.name}
                   </span>
                   <span className="block text-sm font-semibold text-white/60">
-                    {profile.role} · {profile.neighborhood}
+                    {[profile.role, profile.neighborhood].filter(Boolean).join(' · ')}
                   </span>
                   <span className="mt-1 block text-sm font-black text-[#f4c430]">
                     {connected ? 'Connected' : 'Saved'}
@@ -7384,6 +7412,11 @@ function ProductionClientPassportPanel({
   const [passportBusy, setPassportBusy] = useState(false);
   const [passportOpen, setPassportOpen] = useState(false);
   const [captionDraft, setCaptionDraft] = useState('');
+  const [hairProfile, setHairProfile] = useState<ClientHairProfile>(
+    emptyClientHairProfile,
+  );
+  const [hairProfileBusy, setHairProfileBusy] = useState(false);
+  const [hairProfileMessage, setHairProfileMessage] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -7404,8 +7437,15 @@ function ProductionClientPassportPanel({
         if (cancelled) return;
         setClientId(ensuredClientId);
         const photos = await loadSignedClientPhotos(ensuredClientId);
+        const { data: clientRow, error: clientProfileError } = await supabase
+          .from('frizi_clients')
+          .select('hair_profile')
+          .eq('id', ensuredClientId)
+          .maybeSingle();
+        if (clientProfileError) throw clientProfileError;
         const nextPassport = await loadClientPassport();
         if (cancelled) return;
+        setHairProfile(normalizeClientHairProfile(clientRow?.hair_profile));
         setCurrentHairPhoto(
           photos.find((photo) => photo.photoType === 'hair_history') || null,
         );
@@ -7692,6 +7732,39 @@ function ProductionClientPassportPanel({
     }
   }
 
+  async function saveHairProfile() {
+    if (!clientId || !isSupabaseConfigured) {
+      setHairProfileMessage('Sign in before saving your hair profile.');
+      return;
+    }
+    setHairProfileBusy(true);
+    setHairProfileMessage('');
+    try {
+      const { error } = await createClient()
+        .from('frizi_clients')
+        .update({
+          hair_profile: hairProfile,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', clientId);
+      if (error) throw error;
+      setHairProfileMessage('Hair profile saved.');
+    } catch (error) {
+      setHairProfileMessage(
+        error instanceof Error
+          ? error.message
+          : 'Could not save your hair profile.',
+      );
+    } finally {
+      setHairProfileBusy(false);
+    }
+  }
+
+  function updateHairProfile(field: keyof ClientHairProfile, value: string) {
+    setHairProfile((current) => ({ ...current, [field]: value }));
+    setHairProfileMessage('');
+  }
+
   return (
     <div className="mt-5 space-y-4">
       <div className="flex items-center justify-between gap-3 rounded-[24px] border border-white/10 bg-[#151519] p-4">
@@ -7709,6 +7782,72 @@ function ProductionClientPassportPanel({
         >
           <QrCode size={22} />
         </button>
+      </div>
+
+      <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
+        <h2 className="text-2xl font-black">Hair details</h2>
+        <p className="mt-2 leading-7 text-white/68">
+          Add only what you want. Your connected professional can use this before
+          an appointment.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {[
+            ['color', 'Hair colour'],
+            ['texture', 'Texture'],
+            ['density', 'Density'],
+            ['length', 'Length'],
+            ['currentStyle', 'Current style'],
+            ['products', 'Products used'],
+            ['treatmentHistory', 'Treatment history'],
+          ].map(([field, label]) => (
+            <label className="block" key={field}>
+              <span className="text-sm font-black text-white/72">{label}</span>
+              <input
+                className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 font-semibold text-white outline-none placeholder:text-white/38"
+                value={hairProfile[field as keyof ClientHairProfile]}
+                onChange={(event) =>
+                  updateHairProfile(
+                    field as keyof ClientHairProfile,
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+          ))}
+        </div>
+        <label className="mt-3 block">
+          <span className="text-sm font-black text-white/72">
+            Goals and notes
+          </span>
+          <textarea
+            className="mt-2 min-h-24 w-full rounded-2xl border border-white/10 bg-[#0d0d10] px-4 py-3 font-semibold text-white outline-none placeholder:text-white/38"
+            placeholder="What you want next, what to avoid, or anything your professional should remember"
+            value={hairProfile.goals}
+            onChange={(event) => updateHairProfile('goals', event.target.value)}
+          />
+        </label>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <button
+            className="flex min-h-12 items-center justify-center rounded-2xl bg-[#f4c430] px-4 font-black text-black disabled:opacity-60"
+            type="button"
+            disabled={hairProfileBusy}
+            onClick={() => void saveHairProfile()}
+          >
+            {hairProfileBusy ? 'Saving...' : 'Continue'}
+          </button>
+          <button
+            className="min-h-12 rounded-2xl border border-white/15 px-4 font-black text-white"
+            type="button"
+            onClick={() => setHairProfileMessage('Skipped for now.')}
+          >
+            Skip for now
+          </button>
+        </div>
+        {hairProfileMessage ? (
+          <p className="mt-3 rounded-2xl border border-[#f4c430]/35 bg-[#f4c430]/10 px-4 py-3 text-sm font-bold text-[#f4c430]">
+            {hairProfileMessage}
+          </p>
+        ) : null}
       </div>
 
       <div className="rounded-[28px] border border-white/10 bg-[#151519] p-5">
@@ -8173,10 +8312,10 @@ function formatPromoExpiryTime(value: string) {
 
 function promoOfferLabel(promotion: ClientPromoMessage | PublicPromotion) {
   if (promotion.discountType === 'percentage')
-    return `${Math.max(0, promotion.discountValue || 0)}% off`;
+    return `${Math.max(0, promotion.discountValue || 0)}% OFF`;
   if (promotion.discountType === 'fixed_amount')
-    return `${formatCurrency(Math.max(0, promotion.discountValue || 0) * 100)} off`;
-  if (promotion.discountType === 'free_item') return 'Free offer';
+    return `${formatCurrency(Math.max(0, promotion.discountValue || 0) * 100)} OFF`;
+  if (promotion.discountType === 'free_item') return 'FREE OFFER';
   return '';
 }
 
@@ -8324,7 +8463,7 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
   return {
     id: String(profile.id || ''),
     name: String(profile.name || 'Professional'),
-    role: String(profile.role || 'Frizi professional'),
+    role: cleanPublicProfessionalTitle(String(profile.role || '')),
     studio: String(profile.studio || 'Independent professional'),
     neighborhood: String(profile.neighborhood || 'Local area'),
     distance: String(profile.distance || 'Local area'),

@@ -32,6 +32,12 @@ function publicPromotionPayload(promotion: Record<string, any> | null) {
   };
 }
 
+function cleanProfessionalTitle(value?: string | null) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || /^other$/i.test(trimmed)) return '';
+  return trimmed;
+}
+
 function publicProfessionalPayload(professional: Record<string, any>, services: Array<Record<string, any>>, promotion: Record<string, any> | null) {
   const location = professional.location && typeof professional.location === 'object' ? professional.location : {};
   const publicServices = services.map((service) => ({
@@ -45,7 +51,11 @@ function publicProfessionalPayload(professional: Record<string, any>, services: 
   return {
     id: professional.id,
     name: professional.display_name,
-    role: professional.primary_specialty || professional.specialties?.[0] || 'Hair professional',
+    role:
+      cleanProfessionalTitle(professional.professional_title) ||
+      cleanProfessionalTitle(professional.primary_specialty) ||
+      cleanProfessionalTitle(professional.specialties?.[0]) ||
+      '',
     studio: professional.studio_name || 'Independent professional',
     neighborhood: location.city || '',
     distance: 'Local',
@@ -101,7 +111,7 @@ export default async function handler(request: IncomingMessage, response: Server
 
     const { data: professional, error: professionalError } = await supabase
       .from('frizi_professionals')
-      .select('id, display_name, studio_name, bio, specialties, primary_specialty, location, profile_photo_url, hero_photo_url, public_profile_status, bookable')
+      .select('id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, location, profile_photo_url, hero_photo_url, public_profile_status, bookable')
       .eq('id', invite.professional_id)
       .maybeSingle();
 
