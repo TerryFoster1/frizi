@@ -39,16 +39,42 @@ function cleanProfessionalTitle(value?: string | null) {
   return trimmed;
 }
 
+function defaultBookingDurationMinutes(professional: Record<string, any>) {
+  const settings = professional.booking_settings && typeof professional.booking_settings === 'object'
+    ? professional.booking_settings
+    : {};
+  const availability = settings.availability && typeof settings.availability === 'object'
+    ? settings.availability
+    : {};
+  const value = Number(settings.defaultBookingDurationMinutes || availability.defaultBookingDurationMinutes || 45);
+  return Number.isFinite(value) && value >= 15 ? Math.min(240, value) : 45;
+}
+
+function basicBookingService(professional: Record<string, any>) {
+  const duration = defaultBookingDurationMinutes(professional);
+  return {
+    id: `basic:${professional.id}`,
+    name: 'Appointment request',
+    duration: `${duration} min`,
+    price: '',
+    priceCents: 0,
+    durationMinutes: duration,
+    paymentRequirement: 'pay_at_appointment',
+  };
+}
+
 function publicProfessionalPayload(professional: Record<string, any>, services: Array<Record<string, any>>, promotion: Record<string, any> | null) {
   const location = professional.location && typeof professional.location === 'object' ? professional.location : {};
   const capabilities = resolveProfessionalCapabilities(professional);
-  const publicServices = services.map((service) => ({
-    id: service.id,
-    name: service.name,
-    duration: service.duration_minutes ? `${service.duration_minutes} min` : 'Book online',
-    price: service.pricing_type === 'free_consultation' ? 'Free consultation' : `$${(Number(service.base_price_cents || 0) / 100).toFixed(0)}`,
-    priceCents: Number(service.base_price_cents || 0),
-  }));
+  const publicServices = capabilities.canUseAdvancedServices
+    ? services.map((service) => ({
+        id: service.id,
+        name: service.name,
+        duration: service.duration_minutes ? `${service.duration_minutes} min` : 'Book online',
+        price: service.pricing_type === 'free_consultation' ? 'Free consultation' : `$${(Number(service.base_price_cents || 0) / 100).toFixed(0)}`,
+        priceCents: Number(service.base_price_cents || 0),
+      }))
+    : [basicBookingService(professional)];
 
   return {
     id: professional.id,
@@ -67,7 +93,7 @@ function publicProfessionalPayload(professional: Record<string, any>, services: 
     reviews: 0,
     repeatRate: '',
     nextAvailable: 'Check calendar',
-    specialties: professional.specialties || [],
+    specialties: Array.isArray(professional.specialties) ? professional.specialties.slice(0, 5) : [],
     accommodations: [],
     searchTerms: [professional.display_name, professional.studio_name, ...(professional.specialties || [])].filter(Boolean),
     whyMatch: professional.studio_name || 'Connected by invite',
@@ -114,7 +140,7 @@ export default async function handler(request: IncomingMessage, response: Server
 
     const { data: professional, error: professionalError } = await supabase
       .from('frizi_professionals')
-      .select('id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, location, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status')
+      .select('id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, location, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status, booking_settings')
       .eq('id', invite.professional_id)
       .maybeSingle();
 

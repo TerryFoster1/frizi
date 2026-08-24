@@ -235,6 +235,56 @@ function paymentRequiredCentsFor(
   return 0;
 }
 
+function defaultBookingDurationMinutes(professional: ProfessionalRow) {
+  const settings = professional.booking_settings as {
+    defaultBookingDurationMinutes?: unknown;
+    availability?: { defaultBookingDurationMinutes?: unknown };
+  } | null;
+  const value = Number(
+    settings?.defaultBookingDurationMinutes ||
+      settings?.availability?.defaultBookingDurationMinutes ||
+      45,
+  );
+  return Number.isFinite(value) && value >= 15 ? Math.min(240, value) : 45;
+}
+
+function basicBookingService(professional: ProfessionalRow): ServiceRow {
+  const duration = defaultBookingDurationMinutes(professional);
+  return {
+    id: `basic:${professional.id}`,
+    professional_id: professional.id,
+    name: 'Appointment request',
+    public_description: 'A basic appointment request based on this professional profile.',
+    base_price_cents: 0,
+    currency: 'cad',
+    duration_minutes: duration,
+    pricing_type: 'price_varies',
+    deposit_type: 'none',
+    deposit_amount_cents: 0,
+    deposit_percentage: 0,
+    buffer_before_minutes: 0,
+    buffer_after_minutes: 0,
+    online_booking_enabled: true,
+    new_clients_allowed: true,
+    existing_clients_only: false,
+    service_metadata: { frizi_basic_booking: true },
+  };
+}
+
+function publicBookingServicesFor(
+  professional: ProfessionalRow,
+  services: ServiceRow[],
+) {
+  const capabilities = resolveProfessionalCapabilities(professional);
+  return capabilities.canUseAdvancedServices
+    ? services
+    : [basicBookingService(professional)];
+}
+
+function isBasicBookingServiceId(serviceId: string, professionalId: string) {
+  return serviceId === `basic:${professionalId}`;
+}
+
 function appointmentStatusFor(paymentRequirement: string) {
   return paymentRequirement === 'pay_at_appointment' ||
     paymentRequirement === 'frizi_payment_optional'
@@ -528,8 +578,9 @@ async function loadConnectedProfessionals(
       const location = ((locations || []) as LocationRow[]).find(
         (candidate) => candidate.professional_id === professional.id,
       );
+      const publicServices = publicBookingServicesFor(professional, professionalServices);
       const bookingSlotsByService = Object.fromEntries(
-        professionalServices.map((service) => [
+        publicServices.map((service) => [
           service.id,
           buildSlotsForService(
             professional as ProfessionalRow,
@@ -538,7 +589,7 @@ async function loadConnectedProfessionals(
           ),
         ]),
       );
-      const firstService = professionalServices[0];
+      const firstService = publicServices[0];
       return {
         id: professional.id,
         name: professional.display_name,
@@ -574,12 +625,12 @@ async function loadConnectedProfessionals(
         ].filter(Boolean),
         whyMatch: professional.studio_name || 'Connected professional',
         bio: professional.bio || '',
-        services: professionalServices.map((service) => ({
+        services: publicServices.map((service) => ({
           id: service.id,
           name: service.name,
           duration: `${service.duration_minutes || 60} min`,
           durationMinutes: service.duration_minutes || 60,
-          price: formatServicePrice(service),
+          price: resolveProfessionalCapabilities(professional).canUseAdvancedServices ? formatServicePrice(service) : '',
           priceCents: service.base_price_cents,
           bufferBeforeMinutes: service.buffer_before_minutes || 0,
           bufferAfterMinutes: service.buffer_after_minutes || 0,
@@ -831,23 +882,32 @@ export default async function handler(
       });
     }
 
-    const { data: serviceResult, error: serviceError } = await supabase
-      .from('frizi_services')
-      .select(
-        'id, professional_id, name, public_description, base_price_cents, currency, duration_minutes, pricing_type, deposit_type, deposit_amount_cents, deposit_percentage, buffer_before_minutes, buffer_after_minutes, online_booking_enabled, new_clients_allowed, existing_clients_only, service_metadata',
-      )
-      .eq('id', serviceId)
-      .eq('professional_id', professionalId)
-      .eq('active', true)
-      .eq('online_booking_enabled', true)
-      .maybeSingle();
-
-    const service = serviceResult as ServiceRow | null;
+    const capabilities = resolveProfessionalCapabilities(professional);
+    const isBasicServiceRequest =
+      !capabilities.canUseAdvancedServices &&
+      isBasicBookingServiceId(serviceId, professional.id);
+    const { data: serviceResult, error: serviceError } = isBasicServiceRequest
+      ? { data: null, error: null }
+      : await supabase
+          .from('frizi_services')
+          .select(
+            'id, professional_id, name, public_description, base_price_cents, currency, duration_minutes, pricing_type, deposit_type, deposit_amount_cents, deposit_percentage, buffer_before_minutes, buffer_after_minutes, online_booking_enabled, new_clients_allowed, existing_clients_only, service_metadata',
+          )
+          .eq('id', serviceId)
+          .eq('professional_id', professionalId)
+          .eq('active', true)
+          .eq('online_booking_enabled', true)
+          .maybeSingle();
+    const service =
+      (serviceResult as ServiceRow | null) ||
+      (isBasicServiceRequest ? basicBookingService(professional) : null);
 
     if (serviceError) throw serviceError;
     if (!service)
       return sendJson(response, 409, {
-        error: 'This service is not available for online booking.',
+        error: capabilities.canUseAdvancedServices
+          ? 'This service is not available for online booking.'
+          : 'Choose an available appointment request.',
       });
 
     const durationMinutes = service.duration_minutes || 60;
@@ -977,7 +1037,7 @@ export default async function handler(
       .insert({
         client_id: client.id,
         professional_id: professional.id,
-        service_id: service.id,
+        service_id: service.id.startsWith('basic:') ? null : service.id,
         service_snapshot: serviceSnapshot,
         starts_at: startsAt.toISOString(),
         ends_at: endsAt.toISOString(),

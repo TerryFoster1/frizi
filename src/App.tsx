@@ -654,6 +654,29 @@ function formatServicePrice(service: LiveServiceRow) {
     : `$${dollars}`;
 }
 
+function defaultBookingDurationFromSettings(settings: Record<string, unknown> | null) {
+  const availability = settings?.availability && typeof settings.availability === 'object'
+    ? (settings.availability as { defaultBookingDurationMinutes?: unknown })
+    : null;
+  const value = Number(settings?.defaultBookingDurationMinutes || availability?.defaultBookingDurationMinutes || 45);
+  return Number.isFinite(value) && value >= 15 ? Math.min(240, value) : 45;
+}
+
+function basicBookingServiceFor(profileId: string, settings: Record<string, unknown> | null): Service {
+  const durationMinutes = defaultBookingDurationFromSettings(settings);
+  return {
+    id: `basic:${profileId.replace(/^live-/, '')}`,
+    name: 'Appointment request',
+    duration: `${durationMinutes} min`,
+    price: '',
+    priceCents: 0,
+    durationMinutes,
+    bufferBeforeMinutes: 0,
+    bufferAfterMinutes: 0,
+    paymentRequirement: 'pay_at_appointment',
+  };
+}
+
 function cleanPublicProfessionalTitle(value?: string | null) {
   const trimmed = String(value || '').trim();
   if (!trimmed || /^other$/i.test(trimmed)) return '';
@@ -851,17 +874,32 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
         .map(cleanPublicProfessionalTitle)
         .filter(Boolean);
       const role = publicProfessionalTitle(profile);
-      if (!profileServices.length) return [];
+      const publicServices = capabilities.canUseAdvancedServices
+        ? profileServices.map((service) => ({
+            name: service.name,
+            duration: `${service.duration_minutes || 60} min`,
+            price: formatServicePrice(service),
+            priceCents: service.base_price_cents,
+            id: service.id,
+            durationMinutes: service.duration_minutes || 60,
+            paymentRequirement: paymentRequirementForService(service),
+            bufferBeforeMinutes: service.buffer_before_minutes || 0,
+            bufferAfterMinutes: service.buffer_after_minutes || 0,
+          }))
+        : [basicBookingServiceFor(profile.id, profile.booking_settings)];
+      if (!publicServices.length) return [];
       const bookingSlots = buildSlotsFromBookingSettings(
         profile.booking_settings,
-        profileServices[0]?.duration_minutes || 60,
+        publicServices[0]?.durationMinutes || 45,
       );
       const searchTerms = [
         ...liveProfessionalSearchTerms(profile, location),
-        ...profileServices.flatMap((service) => [
-          service.name,
-          service.public_description || '',
-        ]),
+        ...(capabilities.canUseAdvancedServices
+          ? profileServices.flatMap((service) => [
+              service.name,
+              service.public_description || '',
+            ])
+          : []),
         ...taxonomyTermsForLiveProfile(profile, profileServices),
       ].filter(Boolean);
 
@@ -885,22 +923,12 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
           reviews: 0,
           repeatRate: 'New',
           nextAvailable: 'Request a time',
-          specialties: specialties.length ? specialties : [],
+          specialties: specialties.length ? specialties.slice(0, 5) : [],
           accommodations: ['Book online', 'Frizi verified profile'],
           searchTerms,
           whyMatch: profile.studio_name || 'Independent professional',
           bio: profile.bio || 'This professional has not added a bio yet.',
-          services: profileServices.map((service) => ({
-            name: service.name,
-            duration: `${service.duration_minutes || 60} min`,
-            price: formatServicePrice(service),
-            priceCents: service.base_price_cents,
-            id: service.id,
-            durationMinutes: service.duration_minutes || 60,
-            paymentRequirement: paymentRequirementForService(service),
-            bufferBeforeMinutes: service.buffer_before_minutes || 0,
-            bufferAfterMinutes: service.buffer_after_minutes || 0,
-          })),
+          services: publicServices,
           bookingSlots,
           bookingSettings: profile.booking_settings,
           clientReviews: [],
@@ -4951,9 +4979,11 @@ function BookingCalendarPage({
                         {service.duration}
                       </span>
                     </span>
-                    <span className="text-lg font-black text-[#f4c430]">
-                      {service.price}
-                    </span>
+                    {service.price ? (
+                      <span className="text-lg font-black text-[#f4c430]">
+                        {service.price}
+                      </span>
+                    ) : null}
                   </button>
                 ))
               ) : (
@@ -5069,13 +5099,13 @@ function BookingCalendarPage({
               label="Duration"
               value={selectedServiceRecord?.duration || 'Set by professional'}
             />
-            <ReceiptRow
-              label="Price"
-              value={
-                selectedServiceRecord?.price || 'Configured by professional'
-              }
-              strong
-            />
+            {selectedServiceRecord?.price ? (
+              <ReceiptRow
+                label="Price"
+                value={selectedServiceRecord.price}
+                strong
+              />
+            ) : null}
           </div>
           <p className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-black text-[#f4c430]">
             {selectedDay
@@ -8467,9 +8497,10 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
     duration: String(
       service.duration || `${Number(service.durationMinutes || 60)} min`,
     ),
-    price: String(
-      service.price || formatCurrency(Number(service.priceCents || 0)),
-    ),
+    price:
+      typeof service.price === 'string'
+        ? service.price
+        : formatCurrency(Number(service.priceCents || 0)),
     durationMinutes: Number(service.durationMinutes || 60),
     bufferBeforeMinutes: Number(service.bufferBeforeMinutes || 0),
     bufferAfterMinutes: Number(service.bufferAfterMinutes || 0),
@@ -8715,15 +8746,33 @@ function rankProfessionals(
   query: string,
   filters: FilterState,
 ) {
-  const tokens = query
+  const tokens = expandSearchTokens(query
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter(Boolean);
+    .filter(Boolean));
 
   return filterLocalProfiles(profileList, filters).sort(
     (a, b) => scoreProfile(b, tokens) - scoreProfile(a, tokens),
   );
+}
+
+function expandSearchTokens(tokens: string[]) {
+  const synonyms: Record<string, string[]> = {
+    barber: ['barbering', 'fade', 'beard', 'mens'],
+    barbers: ['barbering', 'fade', 'beard', 'mens'],
+    balayage: ['colour', 'color', 'highlights'],
+    blonde: ['blonding', 'colour', 'color'],
+    color: ['colour', 'colourist'],
+    colour: ['color', 'colourist'],
+    curly: ['curls', 'curly hair', 'texture'],
+    fade: ['barber', 'barbering', 'skin fade', 'taper'],
+    fades: ['barber', 'barbering', 'skin fade', 'taper'],
+    haircut: ['cut', 'haircuts', 'stylist'],
+    muslim: ['private', 'modest', 'women only', 'hijab'],
+    thin: ['fine', 'fine hair'],
+  };
+  return Array.from(new Set(tokens.flatMap((token) => [token, ...(synonyms[token] || [])])));
 }
 
 function filterLocalProfiles(profiles: Professional[], filters: FilterState) {
@@ -8785,7 +8834,7 @@ function scoreProfile(profile: Professional, tokens: string[]) {
     .toLowerCase();
 
   return tokens.reduce((score, token) => {
-    if (profile.searchTerms.includes(token)) return score + 8;
+    if (profile.searchTerms.some((term) => term.toLowerCase() === token)) return score + 8;
     if (haystack.includes(token)) return score + 3;
     return score;
   }, 0);

@@ -79,3 +79,18 @@ test('Client profile omits Message for Pro Free and server-side paid gates remai
   assert.match(inviteEndpoint, /canCreatePromotions/);
   assert.match(checkoutEndpoint, /canProcessPayments/);
 });
+
+test('Pro Free booking exposes a basic appointment path without public prices', () => {
+  assert.match(appSource, /basicBookingServiceFor/);
+  assert.match(appSource, /capabilities\.canUseAdvancedServices[\s\S]*: \[basicBookingServiceFor/);
+  assert.match(appointmentsEndpoint, /basicBookingService/);
+  assert.match(appointmentsEndpoint, /isBasicBookingServiceId/);
+  assert.match(appointmentsEndpoint, /service_id: service\.id\.startsWith\('basic:'\) \? null : service\.id/);
+  assert.match(inviteEndpoint, /basicBookingService/);
+});
+
+test('client search expands common service and specialty synonyms', () => {
+  assert.match(appSource, /function expandSearchTokens/);
+  assert.match(appSource, /barber: \['barbering', 'fade', 'beard', 'mens'\]/);
+  assert.match(appSource, /thin: \['fine', 'fine hair'\]/);
+});
