@@ -3,6 +3,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createSupabaseServiceClient, isSupabaseServiceConfigured } from './_supabase.mjs';
 import { enforceRateLimit } from './_rate-limit.mjs';
+import { isPubliclyBookableProfessional, resolveProfessionalCapabilities } from './_entitlements.mjs';
 
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
   response.statusCode = status;
@@ -40,6 +41,7 @@ function cleanProfessionalTitle(value?: string | null) {
 
 function publicProfessionalPayload(professional: Record<string, any>, services: Array<Record<string, any>>, promotion: Record<string, any> | null) {
   const location = professional.location && typeof professional.location === 'object' ? professional.location : {};
+  const capabilities = resolveProfessionalCapabilities(professional);
   const publicServices = services.map((service) => ({
     id: service.id,
     name: service.name,
@@ -73,7 +75,8 @@ function publicProfessionalPayload(professional: Record<string, any>, services: 
     services: publicServices,
     bookingSlots: ['Choose a date'],
     clientReviews: [],
-    promotion: publicPromotionPayload(promotion),
+    promotion: capabilities.canCreatePromotions ? publicPromotionPayload(promotion) : null,
+    capabilities,
   };
 }
 
@@ -111,12 +114,12 @@ export default async function handler(request: IncomingMessage, response: Server
 
     const { data: professional, error: professionalError } = await supabase
       .from('frizi_professionals')
-      .select('id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, location, profile_photo_url, hero_photo_url, public_profile_status, bookable')
+      .select('id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, location, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status')
       .eq('id', invite.professional_id)
       .maybeSingle();
 
     if (professionalError) throw professionalError;
-    if (!professional) return sendJson(response, 404, { error: 'This professional is not available.' });
+    if (!professional || !isPubliclyBookableProfessional(professional)) return sendJson(response, 404, { error: 'This professional is not available.' });
 
     const [{ data: services, error: servicesError }, { data: promotions, error: promotionsError }] = await Promise.all([
       supabase

@@ -5,6 +5,10 @@ import {
   createSupabaseServiceClient,
   isSupabaseServiceConfigured,
 } from './_supabase.mjs';
+import {
+  isPubliclyBookableProfessional,
+  resolveProfessionalCapabilities,
+} from './_entitlements.mjs';
 import { dispatchNotificationPush } from './_notifications.mjs';
 import { enforceRateLimit } from './_rate-limit.mjs';
 
@@ -51,6 +55,7 @@ type ProfessionalRow = {
   hero_photo_url?: string | null;
   public_profile_status: string;
   bookable: boolean;
+  account_plan?: string | null;
   subscription_status: string;
   booking_settings: Record<string, unknown> | null;
 };
@@ -115,10 +120,6 @@ function splitName(displayName: string) {
 
 function normalizeProfessionalId(value: string) {
   return value.replace(/^live-/, '');
-}
-
-function isActiveSubscription(status: string | null | undefined) {
-  return status === 'active' || status === 'trialing';
 }
 
 function cleanProfessionalTitle(value?: string | null) {
@@ -480,7 +481,7 @@ async function loadConnectedProfessionals(
     supabase
       .from('frizi_professionals')
       .select(
-        'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, subscription_status, booking_settings',
+        'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status, booking_settings',
       )
       .in('id', professionalIds),
     supabase
@@ -513,9 +514,7 @@ async function loadConnectedProfessionals(
   return ((professionals || []) as ProfessionalRow[])
     .filter(
       (professional) =>
-        professional.public_profile_status === 'published' &&
-        Boolean(professional.bookable) &&
-        isActiveSubscription(String(professional.subscription_status || '')),
+        isPubliclyBookableProfessional(professional),
     )
     .map((professional) => {
       const professionalServices = ((services || []) as ServiceRow[]).filter(
@@ -593,6 +592,7 @@ async function loadConnectedProfessionals(
         bookingSettings: professional.booking_settings || null,
         clientReviews: [],
         promotion: null,
+        capabilities: resolveProfessionalCapabilities(professional),
       };
     });
 }
@@ -813,7 +813,7 @@ export default async function handler(
       await supabase
         .from('frizi_professionals')
         .select(
-          'id, profile_id, display_name, public_profile_status, bookable, subscription_status, booking_settings',
+          'id, profile_id, display_name, public_profile_status, bookable, account_plan, subscription_status, booking_settings',
         )
         .eq('id', professionalId)
         .maybeSingle();
@@ -823,9 +823,7 @@ export default async function handler(
     if (professionalError) throw professionalError;
     if (
       !professional ||
-      professional.public_profile_status !== 'published' ||
-      !professional.bookable ||
-      !isActiveSubscription(professional.subscription_status)
+      !isPubliclyBookableProfessional(professional)
     ) {
       return sendJson(response, 409, {
         error:

@@ -47,6 +47,7 @@ import {
   pushSupported,
   type PushSubscriptionStatus,
 } from './lib/pushNotifications';
+import { resolveProfessionalCapabilities } from './lib/friziEntitlements';
 
 const FRIZI_PROMO_FALLBACK_IMAGE = '/frizi-client-hero-salon.png';
 
@@ -104,6 +105,7 @@ type Professional = {
   bookingSettings?: Record<string, unknown> | null;
   clientReviews: Review[];
   promotion: PublicPromotion | null;
+  capabilities: ReturnType<typeof resolveProfessionalCapabilities>;
 };
 
 type BookingRequest = {
@@ -595,6 +597,10 @@ type LiveProfessionalRow = {
   specialties: string[] | null;
   primary_specialty: string | null;
   booking_settings: Record<string, unknown> | null;
+  public_profile_status?: string | null;
+  bookable?: boolean | null;
+  account_plan?: string | null;
+  subscription_status?: string | null;
 };
 
 type LiveLocationRow = {
@@ -767,18 +773,25 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
   const { data: liveProfiles, error: profileError } = await supabase
     .from('frizi_professionals')
     .select(
-      'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, booking_settings',
+      'id, display_name, professional_title, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, booking_settings, account_plan, subscription_status',
     )
     .eq('public_profile_status', 'published')
     .eq('bookable', true)
-    .in('subscription_status', ['active', 'trialing'])
     .order('updated_at', { ascending: false })
     .limit(12);
 
   if (profileError) throw profileError;
   if (!liveProfiles?.length) return [];
 
-  const ids = liveProfiles.map((profile: LiveProfessionalRow) => profile.id);
+  const eligibleProfiles = (liveProfiles as LiveProfessionalRow[]).filter(
+    (profile) =>
+      resolveProfessionalCapabilities(profile).canAppearInDiscovery &&
+      profile.public_profile_status === 'published' &&
+      profile.bookable,
+  );
+  if (!eligibleProfiles.length) return [];
+
+  const ids = eligibleProfiles.map((profile: LiveProfessionalRow) => profile.id);
   const [
     { data: locations, error: locationError },
     { data: services, error: serviceError },
@@ -818,8 +831,9 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
   if (serviceError) throw serviceError;
   if (promotionError) throw promotionError;
 
-  return (liveProfiles as LiveProfessionalRow[]).flatMap(
+  return eligibleProfiles.flatMap(
     (profile): Professional[] => {
+      const capabilities = resolveProfessionalCapabilities(profile);
       const location = (locations as LiveLocationRow[] | null)?.find(
         (candidate) => candidate.professional_id === profile.id,
       );
@@ -827,10 +841,12 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
         (services as LiveServiceRow[] | null) || []
       ).filter((service) => service.professional_id === profile.id);
       const publicPromotion =
-        ((promotions as LivePromotionRow[] | null) || [])
-          .filter((promotion) => promotion.created_by === profile.id)
-          .map(publicPromotionFromRow)
-          .find(Boolean) || null;
+        capabilities.canCreatePromotions
+          ? ((promotions as LivePromotionRow[] | null) || [])
+              .filter((promotion) => promotion.created_by === profile.id)
+              .map(publicPromotionFromRow)
+              .find(Boolean) || null
+          : null;
       const specialties = (profile.specialties || [])
         .map(cleanPublicProfessionalTitle)
         .filter(Boolean);
@@ -889,6 +905,7 @@ async function loadLiveProfessionals(): Promise<Professional[]> {
           bookingSettings: profile.booking_settings,
           clientReviews: [],
           promotion: publicPromotion,
+          capabilities,
         },
       ];
     },
@@ -1736,6 +1753,7 @@ function App() {
         bookingSlots: [],
         clientReviews: [],
         promotion: null,
+        capabilities: resolveProfessionalCapabilities({ account_plan: 'pro_free' }),
       },
       session,
     );
@@ -4380,6 +4398,7 @@ function DeckCard({
   voiceMessage: string;
 }) {
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const canMessage = profile.capabilities.canMessageClients;
   const swipeGesture = useRef<{
     isHorizontal: boolean;
     lastX: number;
@@ -4525,7 +4544,7 @@ function DeckCard({
               ) : null}
             </div>
           </div>
-          <div className="mt-6 grid grid-cols-[1.25fr_1fr_1fr] gap-2">
+          <div className={`mt-6 grid ${canMessage ? 'grid-cols-[1.25fr_1fr_1fr]' : 'grid-cols-[1.25fr_1fr]'} gap-2`}>
             <button
               className="flex min-h-12 items-center justify-center rounded-xl bg-[#f4c430] px-2 text-[13px] font-black leading-tight text-black sm:text-sm"
               type="button"
@@ -4545,14 +4564,16 @@ function DeckCard({
               <Star size={16} fill={isSaved ? 'currentColor' : 'none'} />
               {isSaved ? 'Saved' : 'Save Pro'}
             </button>
-            <button
-              className="flex min-h-12 items-center justify-center gap-1 rounded-xl border border-white/35 bg-black/35 px-2 text-sm font-black text-white backdrop-blur"
-              type="button"
-              onClick={onMessage}
-            >
-              <MessageCircle size={16} />
-              Message
-            </button>
+            {canMessage ? (
+              <button
+                className="flex min-h-12 items-center justify-center gap-1 rounded-xl border border-white/35 bg-black/35 px-2 text-sm font-black text-white backdrop-blur"
+                type="button"
+                onClick={onMessage}
+              >
+                <MessageCircle size={16} />
+                Message
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -8460,6 +8481,10 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
     profile.promotion && typeof profile.promotion === 'object'
       ? (profile.promotion as Record<string, unknown>)
       : null;
+  const capabilities =
+    profile.capabilities && typeof profile.capabilities === 'object'
+      ? (profile.capabilities as ReturnType<typeof resolveProfessionalCapabilities>)
+      : resolveProfessionalCapabilities(profile);
   return {
     id: String(profile.id || ''),
     name: String(profile.name || 'Professional'),
@@ -8522,6 +8547,7 @@ function professionalFromApi(profile: Record<string, unknown>): Professional {
           firstAppointmentOnly: Boolean(promotion.firstAppointmentOnly),
         }
       : null,
+    capabilities,
   };
 }
 

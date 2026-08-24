@@ -16,6 +16,8 @@ import {
 } from './_frizi-commerce.mjs';
 import { isDemoRequest, sendJson, sendProductionDisabled } from './_environment.mjs';
 import { enforceRateLimit } from './_rate-limit.mjs';
+import { createSupabaseServiceClient, isSupabaseServiceConfigured } from './_supabase.mjs';
+import { resolveProfessionalCapabilities } from './_entitlements.mjs';
 
 type CheckoutKind = 'pro_subscription' | 'service_booking' | 'product_purchase';
 
@@ -142,6 +144,24 @@ export default async function handler(request: IncomingMessage & { body?: unknow
       summary,
       message: 'No payment is due. Frizi can complete this appointment without creating a Stripe Checkout Session.',
     });
+  }
+
+  if (!isSupabaseServiceConfigured()) {
+    return sendJson(response, 501, { error: 'Frizi payment checkout is not configured.' });
+  }
+  const supabase = createSupabaseServiceClient();
+  const normalizedProfessionalId = String(payload.professionalId || summary.professionalId || '').replace(/^live-/, '');
+  if (!normalizedProfessionalId) {
+    return sendJson(response, 400, { error: 'Choose a professional before starting payment.' });
+  }
+  const { data: professional, error: professionalError } = await supabase
+    .from('frizi_professionals')
+    .select('id, account_plan, subscription_status')
+    .eq('id', normalizedProfessionalId)
+    .maybeSingle();
+  if (professionalError) return sendJson(response, 500, { error: 'Payment eligibility could not be checked.' });
+  if (!professional || !resolveProfessionalCapabilities(professional).canProcessPayments) {
+    return sendJson(response, 403, { error: 'Online payment is not available for this professional.' });
   }
 
   const metadata = metadataFromSummary(summary);

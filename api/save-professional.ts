@@ -2,6 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createSupabaseServiceClient, isSupabaseServiceConfigured } from './_supabase.mjs';
+import { isPubliclyBookableProfessional } from './_entitlements.mjs';
 import { enforceRateLimit } from './_rate-limit.mjs';
 
 type SaveProfessionalPayload = {
@@ -62,16 +63,13 @@ export default async function handler(request: IncomingMessage & { body?: unknow
 
     const { data: professional, error: professionalError } = await supabase
       .from('frizi_professionals')
-      .select('id, display_name, public_profile_status, bookable, subscription_status')
+      .select('id, display_name, public_profile_status, bookable, account_plan, subscription_status')
       .eq('id', professionalId)
       .maybeSingle();
 
     if (professionalError) throw professionalError;
     if (
-      !professional ||
-      professional.public_profile_status !== 'published' ||
-      !professional.bookable ||
-      !['active', 'trialing'].includes(String(professional.subscription_status || ''))
+      !isPubliclyBookableProfessional(professional)
     ) {
       return sendJson(response, 404, { error: 'This professional is not currently available to save.' });
     }

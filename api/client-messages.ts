@@ -7,6 +7,7 @@ import {
 } from './_supabase.mjs';
 import { dispatchNotificationPush } from './_notifications.mjs';
 import { enforceRateLimit } from './_rate-limit.mjs';
+import { resolveProfessionalCapabilities } from './_entitlements.mjs';
 
 type MessagePayload = {
   appointmentId?: string;
@@ -293,12 +294,17 @@ export default async function handler(
 
     const { data: professional, error: professionalError } = await supabase
       .from('frizi_professionals')
-      .select('id, display_name, profile_id, frizi_profiles(auth_user_id)')
+      .select('id, display_name, profile_id, account_plan, subscription_status, frizi_profiles(auth_user_id)')
       .eq('id', professionalId)
       .maybeSingle();
     if (professionalError) throw professionalError;
     if (!professional)
       return sendJson(response, 404, { error: 'Professional was not found.' });
+    if (!resolveProfessionalCapabilities(professional).canMessageClients) {
+      return sendJson(response, 403, {
+        error: 'Messaging is not available for this professional yet.',
+      });
+    }
 
     const { data: existingRelationship, error: existingRelationshipError } =
       await supabase

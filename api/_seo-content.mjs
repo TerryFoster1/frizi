@@ -1,4 +1,5 @@
 import { createSupabaseClient, isSupabaseConfigured } from './_supabase.mjs';
+import { isPubliclyBookableProfessional } from './_entitlements.mjs';
 
 export const siteUrl = 'https://frizi.ca';
 
@@ -533,11 +534,10 @@ export async function loadPublicProfessionals({ categoryKey, cityKey, slug }) {
   const profileQuery = supabase
     .from('frizi_professionals')
     .select(
-      'id, public_slug, display_name, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, subscription_status, updated_at',
+      'id, public_slug, display_name, studio_name, bio, specialties, primary_specialty, profile_photo_url, hero_photo_url, public_profile_status, bookable, account_plan, subscription_status, updated_at',
     )
     .eq('public_profile_status', 'published')
     .eq('bookable', true)
-    .in('subscription_status', ['active', 'trialing'])
     .not('profile_id', 'is', null)
     .order('updated_at', { ascending: false })
     .limit(24);
@@ -547,7 +547,10 @@ export async function loadPublicProfessionals({ categoryKey, cityKey, slug }) {
   const { data: profiles, error: profileError } = await profileQuery;
   if (profileError || !profiles?.length) return [];
 
-  const ids = profiles.map((profile) => profile.id);
+  const eligibleProfiles = profiles.filter(isPubliclyBookableProfessional);
+  if (!eligibleProfiles.length) return [];
+
+  const ids = eligibleProfiles.map((profile) => profile.id);
   const [{ data: locations }, { data: services }] = await Promise.all([
     supabase
       .from('frizi_professional_locations')
@@ -571,7 +574,7 @@ export async function loadPublicProfessionals({ categoryKey, cityKey, slug }) {
   const category = categoryKey ? discoveryCategories[categoryKey] : null;
   const city = cityKey ? cityPages[cityKey] : null;
 
-  return profiles
+  return eligibleProfiles
     .map((profile) => {
       const location = (locations || []).find(
         (candidate) => candidate.professional_id === profile.id,
