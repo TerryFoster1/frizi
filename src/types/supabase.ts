@@ -16,7 +16,7 @@ export type FriziDatabase = {
         Row: {
           id: string;
           auth_user_id: string | null;
-          account_type: 'client' | 'professional' | 'admin';
+          account_type: 'client' | 'professional' | 'salon_owner';
           display_name: string;
           email: string | null;
           phone: string | null;
@@ -26,7 +26,7 @@ export type FriziDatabase = {
           updated_at: string;
         };
         Insert: Partial<FriziDatabase['public']['Tables']['frizi_profiles']['Row']> & {
-          account_type: 'client' | 'professional' | 'admin';
+          account_type: 'client' | 'professional' | 'salon_owner';
           display_name: string;
         };
         Update: Partial<FriziDatabase['public']['Tables']['frizi_profiles']['Row']>;
