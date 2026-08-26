@@ -17,3 +17,14 @@ test('client delete account endpoint derives the user from the bearer token', ()
   assert.doesNotMatch(deleteEndpoint, /payload\.(userId|user_id|email|clientId|client_id)/);
   assert.match(deleteEndpoint, /auth\.admin\.deleteUser\(userResult\.user\.id, true\)/);
 });
+
+test('client signup and profile persistence stay client-scoped', () => {
+  assert.match(appSource, /account_type:\s*'client'/);
+  assert.match(appSource, /frizi_account_type:\s*'client'/);
+  assert.match(appSource, /frizi_signup_origin:\s*'client'/);
+  assert.match(appSource, /frizi_roles:\s*\['client'\]/);
+  assert.match(appSource, /function readFriziAccountIntent\(user: SupabaseUser\)/);
+  assert.match(appSource, /accountIntent && accountIntent !== 'client'/);
+  assert.match(appSource, /existingProfile && existingProfile\.account_type !== 'client'/);
+  assert.doesNotMatch(appSource, /\.upsert\([\s\S]*account_type:\s*'client'[\s\S]*onConflict:\s*'auth_user_id'/);
+});

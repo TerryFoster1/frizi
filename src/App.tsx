@@ -2685,11 +2685,23 @@ function splitClientName(displayName: string) {
   };
 }
 
+function readFriziAccountIntent(user: SupabaseUser) {
+  const metadata = user.user_metadata ?? {};
+  const roleList = Array.isArray(metadata.frizi_roles) ? metadata.frizi_roles : [];
+  const rawIntent = metadata.frizi_account_type ?? metadata.account_type ?? roleList[0];
+  return typeof rawIntent === 'string' ? rawIntent : '';
+}
+
 async function ensureCanonicalClientProfile(
   user: SupabaseUser,
   fallbackName?: string,
 ) {
   if (!isSupabaseConfigured) return;
+  const accountIntent = readFriziAccountIntent(user);
+  if (accountIntent && accountIntent !== 'client') {
+    throw new Error('This account belongs to another Frizi app. Sign in with a Frizi Client account to continue.');
+  }
+
   const email = user.email || '';
   const displayName = getClientDisplayName(
     user,
@@ -2697,21 +2709,37 @@ async function ensureCanonicalClientProfile(
   );
   const { firstName, lastName } = splitClientName(displayName);
   const supabase = createClient();
-  const { data: profile, error: profileError } = await supabase
+  const { data: existingProfile, error: existingProfileError } = await supabase
     .from('frizi_profiles')
-    .upsert(
-      {
+    .select('id, account_type')
+    .eq('auth_user_id', user.id)
+    .maybeSingle();
+
+  if (existingProfileError) throw existingProfileError;
+  if (existingProfile && existingProfile.account_type !== 'client') {
+    throw new Error('This account belongs to another Frizi app. Sign in with a Frizi Client account to continue.');
+  }
+
+  const profileMutation = existingProfile
+    ? supabase
+        .from('frizi_profiles')
+        .update({
+          display_name: displayName,
+          email,
+          status: 'active',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingProfile.id)
+    : supabase.from('frizi_profiles').insert({
         auth_user_id: user.id,
         account_type: 'client',
         display_name: displayName,
         email,
         status: 'active',
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'auth_user_id' },
-    )
-    .select('id')
-    .single();
+      });
+
+  const { data: profile, error: profileError } = await profileMutation.select('id').single();
 
   if (profileError) throw profileError;
 
@@ -3280,7 +3308,13 @@ function ClientAuthModal({
           email: trimmedEmail,
           password,
           options: {
-            data: { full_name: trimmedName, account_type: 'client' },
+            data: {
+              full_name: trimmedName,
+              account_type: 'client',
+              frizi_account_type: 'client',
+              frizi_signup_origin: 'client',
+              frizi_roles: ['client'],
+            },
             emailRedirectTo: redirectUrl,
           },
         });
@@ -7578,27 +7612,45 @@ function ProductionClientPassportPanel({
     email: string,
   ) {
     const supabase = createClient();
-    const { data: profile, error: profileError } = await supabase
+    const { data: existingProfile, error: existingProfileError } = await supabase
       .from('frizi_profiles')
-      .upsert(
-        {
+      .select('id, account_type')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+
+    if (existingProfileError) throw existingProfileError;
+    if (existingProfile && existingProfile.account_type !== 'client') {
+      throw new Error('This account belongs to another Frizi app. Sign in with a Frizi Client account to continue.');
+    }
+
+    const profileMutation = existingProfile
+      ? supabase
+          .from('frizi_profiles')
+          .update({
+            display_name: displayName,
+            email,
+            status: 'active',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingProfile.id)
+      : supabase.from('frizi_profiles').insert({
           auth_user_id: authUserId,
           account_type: 'client',
           display_name: displayName,
           email,
           status: 'active',
           updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'auth_user_id' },
-      )
+        });
+
+    const { data: savedProfile, error: savedProfileError } = await profileMutation
       .select('id')
       .single();
-    if (profileError) throw profileError;
+    if (savedProfileError) throw savedProfileError;
 
     const { data: existingClient, error: existingClientError } = await supabase
       .from('frizi_clients')
       .select('id')
-      .eq('profile_id', profile.id)
+      .eq('profile_id', savedProfile.id)
       .maybeSingle();
     if (existingClientError) throw existingClientError;
     if (existingClient?.id) return String(existingClient.id);
@@ -7606,7 +7658,7 @@ function ProductionClientPassportPanel({
     const { data: client, error: clientError } = await supabase
       .from('frizi_clients')
       .insert({
-        profile_id: profile.id,
+        profile_id: savedProfile.id,
         preferred_name: displayName,
         email,
         account_claimed_at: new Date().toISOString(),
