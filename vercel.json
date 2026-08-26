@@ -72,6 +72,10 @@
       "destination": "/api/seo-page?path=/pro/:slug"
     },
     {
+      "source": "/salon/:slug",
+      "destination": "/api/seo-page?path=/salon/:slug"
+    },
+    {
       "source": "/barbers",
       "destination": "/api/seo-page?path=/barbers"
     },
@@ -82,6 +86,22 @@
     {
       "source": "/colourists",
       "destination": "/api/seo-page?path=/colourists"
+    },
+    {
+      "source": "/kitchener/:category",
+      "destination": "/api/seo-page?path=/kitchener/:category"
+    },
+    {
+      "source": "/waterloo/:category",
+      "destination": "/api/seo-page?path=/waterloo/:category"
+    },
+    {
+      "source": "/cambridge/:category",
+      "destination": "/api/seo-page?path=/cambridge/:category"
+    },
+    {
+      "source": "/guelph/:category",
+      "destination": "/api/seo-page?path=/guelph/:category"
     },
     {
       "source": "/barbers/:city",

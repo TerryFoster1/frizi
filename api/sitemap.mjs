@@ -1,4 +1,13 @@
-import { siteUrl } from './_seo-content.mjs';
+import {
+  canonicalDiscoveryRoutes,
+  canonicalLocalPath,
+  initialSeoCitySlugs,
+  loadPublicProfessionals,
+  resolveDiscoveryCategoryKey,
+  resolveCityKey,
+  shouldIndexDiscoveryPage,
+  siteUrl,
+} from './_seo-content.mjs';
 
 const staticPaths = [
   '/',
@@ -22,9 +31,30 @@ function xmlEscape(value) {
     .replaceAll("'", '&apos;');
 }
 
-export default function handler(_request, response) {
+async function loadIndexableLocalDiscoveryPaths() {
+  const paths = [];
+
+  for (const citySlug of initialSeoCitySlugs) {
+    const cityKey = resolveCityKey(citySlug);
+    if (!cityKey) continue;
+
+    for (const categorySlug of canonicalDiscoveryRoutes) {
+      const categoryKey = resolveDiscoveryCategoryKey(categorySlug);
+      if (!categoryKey) continue;
+      const professionals = await loadPublicProfessionals({ categoryKey, cityKey });
+      if (shouldIndexDiscoveryPage({ professionals, categoryKey })) {
+        paths.push(canonicalLocalPath(categoryKey, cityKey));
+      }
+    }
+  }
+
+  return paths;
+}
+
+export default async function handler(_request, response) {
   const now = new Date().toISOString();
-  const urls = staticPaths
+  const localDiscoveryPaths = await loadIndexableLocalDiscoveryPaths();
+  const urls = [...staticPaths, ...localDiscoveryPaths]
     .map(
       (path) =>
         `<url><loc>${xmlEscape(`${siteUrl}${path}`)}</loc><lastmod>${now}</lastmod></url>`,

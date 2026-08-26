@@ -199,6 +199,16 @@ export const cityPages = {
   'st-catharines-on': { name: 'St. Catharines', province: 'ON' },
 };
 
+export const initialSeoCitySlugs = ['kitchener', 'waterloo', 'cambridge', 'guelph'];
+
+export const citySlugAliases = Object.fromEntries(
+  Object.entries(cityPages).flatMap(([key, city]) => [
+    [key, key],
+    [slugify(city.name), key],
+    [slugify(`${city.name}-${city.province}`), key],
+  ]),
+);
+
 export const discoveryCategories = {
   barbers: {
     singular: 'barber',
@@ -260,6 +270,49 @@ export const discoveryCategories = {
     terms: ['extensions', 'hair extensions', 'weave'],
     title: 'Hair extensions specialists',
   },
+};
+
+export const canonicalDiscoveryRoutes = [
+  'barbers',
+  'hair-stylists',
+  'colourists',
+  'balayage',
+  'beard-trim',
+  'fades',
+  'curly-hair-stylists',
+  'fine-hair-stylists',
+];
+
+export const discoverySlugAliases = {
+  barbers: 'barbers',
+  hairstylists: 'hairstylists',
+  'hair-stylists': 'hairstylists',
+  stylists: 'hairstylists',
+  colourists: 'colourists',
+  colorists: 'colourists',
+  balayage: 'balayage',
+  'beard-grooming': 'beard-grooming',
+  'beard-trim': 'beard-trim',
+  fades: 'fades',
+  'fade-barbers': 'fades',
+  'curly-hair': 'curly-hair',
+  'curly-hair-stylists': 'curly-hair',
+  'fine-hair': 'fine-hair',
+  'fine-hair-stylists': 'fine-hair',
+  'hair-extensions': 'hair-extensions',
+};
+
+export const canonicalCategorySlugs = {
+  barbers: 'barbers',
+  hairstylists: 'hair-stylists',
+  colourists: 'colourists',
+  balayage: 'balayage',
+  'beard-grooming': 'beard-grooming',
+  'curly-hair': 'curly-hair-stylists',
+  'fine-hair': 'fine-hair-stylists',
+  'beard-trim': 'beard-trim',
+  fades: 'fades',
+  'hair-extensions': 'hair-extensions',
 };
 
 export const reviewCategories = {
@@ -392,6 +445,30 @@ export function slugify(value) {
 export function canonical(pathname) {
   const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
   return `${siteUrl}${normalized}`;
+}
+
+export function cityPathSlug(cityKey) {
+  const city = cityPages[cityKey];
+  return city ? slugify(city.name) : cityKey;
+}
+
+export function canonicalLocalPath(categoryKey, cityKey) {
+  const categorySlug = canonicalCategorySlugs[categoryKey] || categoryKey;
+  return `/${cityPathSlug(cityKey)}/${categorySlug}`;
+}
+
+export function resolveCityKey(value) {
+  return citySlugAliases[String(value || '').toLowerCase()] || null;
+}
+
+export function resolveDiscoveryCategoryKey(value) {
+  return discoverySlugAliases[String(value || '').toLowerCase()] || null;
+}
+
+export function shouldIndexDiscoveryPage({ professionals = [], categoryKey }) {
+  const coreCategories = new Set(['barbers', 'hairstylists', 'colourists']);
+  const minimum = coreCategories.has(categoryKey) ? 3 : 2;
+  return professionals.length >= minimum;
 }
 
 export function faqJsonLd() {
@@ -609,6 +686,47 @@ export async function loadPublicProfessionals({ categoryKey, cityKey, slug }) {
         .join(' ')
         .toLowerCase();
       return category.terms.some((term) => searchable.includes(term));
+    });
+}
+
+export async function loadPublicSalons({ cityKey, slug }) {
+  if (!isSupabaseConfigured()) return [];
+
+  const supabase = createSupabaseClient();
+  const salonQuery = supabase
+    .from('frizi_salons')
+    .select('id, name, public_slug, status, account_plan, settings, updated_at')
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(24);
+
+  if (slug) salonQuery.eq('public_slug', slug);
+
+  const { data: salons, error } = await salonQuery;
+  if (error || !salons?.length) return [];
+
+  const ids = salons.map((salon) => salon.id);
+  const { data: locations } = await supabase
+    .from('frizi_salon_locations')
+    .select('salon_id, name, city, province, country, status, primary_location')
+    .in('salon_id', ids)
+    .eq('status', 'active');
+
+  const city = cityKey ? cityPages[cityKey] : null;
+  return salons
+    .map((salon) => {
+      const location = (locations || []).find(
+        (candidate) => candidate.salon_id === salon.id && candidate.primary_location,
+      ) || (locations || []).find((candidate) => candidate.salon_id === salon.id);
+      return { ...salon, location };
+    })
+    .filter((salon) => {
+      if (!salon.location) return false;
+      if (!city) return true;
+      return (
+        slugify(salon.location.city) === slugify(city.name) &&
+        String(salon.location.province || '').toUpperCase() === city.province
+      );
     });
 }
 

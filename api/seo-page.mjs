@@ -1,5 +1,6 @@
 import {
   breadcrumbJsonLd,
+  canonicalLocalPath,
   cityPages,
   discoveryCategories,
   escapeHtml,
@@ -8,12 +9,16 @@ import {
   hairTipArticles,
   hairTipCategories,
   learnSections,
+  loadPublicSalons,
   loadPublicProfessionals,
   pageShell,
   rankedCategories,
   renderProfessionalList,
+  resolveCityKey,
+  resolveDiscoveryCategoryKey,
   reviewCategories,
   slugify,
+  shouldIndexDiscoveryPage,
 } from './_seo-content.mjs';
 
 function sendHtml(response, statusCode, html) {
@@ -245,7 +250,7 @@ function renderCategoryHub(pathname, categoryKey) {
         ${popularCities
           .map((cityKey) => {
             const city = cityPages[cityKey];
-            return `<a class="card" href="/${escapeHtml(categoryKey)}/${escapeHtml(cityKey)}">${escapeHtml(category.title)} in ${escapeHtml(city.name)}</a>`;
+            return `<a class="card" href="${escapeHtml(canonicalLocalPath(categoryKey, cityKey))}">${escapeHtml(category.title)} in ${escapeHtml(city.name)}</a>`;
           })
           .join('')}
       </div>
@@ -277,12 +282,13 @@ async function renderDiscoveryPage(
   if (!city || !category) return null;
 
   const professionals = await loadPublicProfessionals({ categoryKey, cityKey });
-  const coreCategories = new Set(['barbers', 'hairstylists', 'colourists']);
   const hasIndexableSupply =
     !options.review &&
-    professionals.length >= (coreCategories.has(categoryKey) ? 3 : 2);
+    shouldIndexDiscoveryPage({ professionals, categoryKey });
   const locationLabel = `${city.name}, ${city.province}`;
   const titlePrefix = options.title || category.title;
+  const canonicalPath =
+    options.review || options.ranked ? pathname : canonicalLocalPath(categoryKey, cityKey);
   const transparentRankCopy = options.ranked
     ? '<p class="notice">Frizi only shows real live professionals here. We do not fabricate rankings, ratings, or reviews to fill a page.</p>'
     : '';
@@ -310,7 +316,7 @@ async function renderDiscoveryPage(
     )}
     <section class="card">
       <h2>Nearby areas</h2>
-      <p><a href="/${escapeHtml(categoryKey)}/waterloo-on">Waterloo</a> · <a href="/${escapeHtml(categoryKey)}/cambridge-on">Cambridge</a> · <a href="/${escapeHtml(categoryKey)}/kitchener-on">Kitchener</a></p>
+      <p><a href="${escapeHtml(canonicalLocalPath(categoryKey, 'waterloo-on'))}">Waterloo</a> · <a href="${escapeHtml(canonicalLocalPath(categoryKey, 'cambridge-on'))}">Cambridge</a> · <a href="${escapeHtml(canonicalLocalPath(categoryKey, 'kitchener-on'))}">Kitchener</a> · <a href="${escapeHtml(canonicalLocalPath(categoryKey, 'guelph-on'))}">Guelph</a></p>
     </section>
     <section class="card">
       <h2>Related Hair Tips</h2>
@@ -321,13 +327,13 @@ async function renderDiscoveryPage(
   return pageShell({
     title: `${titlePrefix} in ${locationLabel} | Frizi`,
     description: `Find ${category.plural} in ${locationLabel} on Frizi. Frizi shows real live professionals only, with no fake rankings or filler profiles.`,
-    pathname,
+    pathname: canonicalPath,
     robots: hasIndexableSupply ? 'index, follow' : 'noindex, follow',
     body,
     jsonLd: [
       breadcrumbJsonLd([
         { name: 'Frizi', path: '/' },
-        { name: titlePrefix, path: pathname },
+        { name: titlePrefix, path: canonicalLocalPath(categoryKey, cityKey) },
       ]),
       hasIndexableSupply
         ? {
@@ -417,6 +423,63 @@ async function renderProfessionalPage(pathname) {
   });
 }
 
+async function renderSalonPage(pathname) {
+  const slug = pathname.split('/').filter(Boolean).at(-1);
+  if (!slug) return null;
+
+  const salons = await loadPublicSalons({ slug });
+  const salon = salons[0];
+  if (!salon) {
+    return pageShell({
+      title: 'Salon not found | Frizi',
+      description:
+        'This Frizi salon profile is not currently public.',
+      pathname,
+      robots: 'noindex, follow',
+      body: '<h1>Salon not found</h1><div class="notice"><p>This salon profile is not currently public on Frizi.</p></div>',
+    });
+  }
+
+  const location = salon.location
+    ? `${salon.location.city}, ${salon.location.province}`
+    : 'Canada';
+  const body = `
+    <h1>${escapeHtml(salon.name)}</h1>
+    <p class="lead">A Frizi salon in ${escapeHtml(location)}.</p>
+    <section class="card">
+      <h2>Book with a professional</h2>
+      <p>Frizi is centred on individual professionals. Salon pages help clients understand the location, then choose the person they want to book.</p>
+      <p><a class="cta" href="/">Find a Pro</a></p>
+    </section>
+  `;
+
+  return pageShell({
+    title: `${salon.name} | Frizi`,
+    description: `${salon.name} is a Frizi salon in ${location}. Find professionals connected to this salon when they are live and bookable.`,
+    pathname,
+    body,
+    jsonLd: [
+      breadcrumbJsonLd([
+        { name: 'Frizi', path: '/' },
+        { name: salon.name, path: pathname },
+      ]),
+      {
+        '@context': 'https://schema.org',
+        '@type': 'HairSalon',
+        name: salon.name,
+        address: salon.location
+          ? {
+              '@type': 'PostalAddress',
+              addressLocality: salon.location.city,
+              addressRegion: salon.location.province,
+              addressCountry: salon.location.country || 'CA',
+            }
+          : undefined,
+      },
+    ],
+  });
+}
+
 export default async function handler(request, response) {
   const pathname = routePath(request).replace(/\/+$/, '') || '/';
   const segments = pathname.split('/').filter(Boolean);
@@ -439,16 +502,31 @@ export default async function handler(request, response) {
     if (segments[0] === 'pro') {
       return sendHtml(response, 200, await renderProfessionalPage(pathname));
     }
+    if (segments[0] === 'salon') {
+      return sendHtml(response, 200, await renderSalonPage(pathname));
+    }
 
     const [categoryOrReview, cityKey] = segments;
-    if (segments.length === 1 && discoveryCategories[categoryOrReview]) {
-      return sendHtml(response, 200, renderCategoryHub(pathname, categoryOrReview));
-    }
-    if (discoveryCategories[categoryOrReview]) {
+    const cityFirstKey = resolveCityKey(categoryOrReview);
+    const cityFirstCategory = resolveDiscoveryCategoryKey(segments[1]);
+    if (cityFirstKey && discoveryCategories[cityFirstCategory]) {
       const html = await renderDiscoveryPage(
         pathname,
-        categoryOrReview,
-        cityKey,
+        cityFirstCategory,
+        cityFirstKey,
+      );
+      if (html) return sendHtml(response, 200, html);
+    }
+
+    const resolvedCategory = resolveDiscoveryCategoryKey(categoryOrReview);
+    if (segments.length === 1 && discoveryCategories[resolvedCategory]) {
+      return sendHtml(response, 200, renderCategoryHub(pathname, resolvedCategory));
+    }
+    if (discoveryCategories[resolvedCategory]) {
+      const html = await renderDiscoveryPage(
+        pathname,
+        resolvedCategory,
+        resolveCityKey(cityKey) || cityKey,
       );
       if (html) return sendHtml(response, 200, html);
     }
