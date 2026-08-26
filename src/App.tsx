@@ -459,7 +459,6 @@ declare global {
 
 type InfoPage = {
   title: string;
-  eyebrow: string;
   summary: string;
   points: string[];
   cta?: { label: string; href: string };
@@ -1162,7 +1161,6 @@ function dateTimeFromParts(date: string, minutes: number) {
 
 const infoPages: Record<string, InfoPage> = {
   'help/payments': {
-    eyebrow: 'Help',
     title: 'Payments and payouts',
     summary:
       'Frizi is being set up for Stripe Connect so clients can pay for bookings and products in-app while professionals receive payouts through the platform.',
@@ -1176,7 +1174,6 @@ const infoPages: Record<string, InfoPage> = {
     cta: { label: 'View terms', href: '/policies/terms' },
   },
   'help/fulfillment': {
-    eyebrow: 'Help',
     title: 'Product fulfillment',
     summary:
       'Frizi product sales are designed so clients buy from Frizi inside the app. Supplier and wholesale details stay in the admin catalogue, not on the client checkout screen.',
@@ -1190,7 +1187,6 @@ const infoPages: Record<string, InfoPage> = {
     cta: { label: 'Open admin catalogue', href: 'https://admin.frizi.ca' },
   },
   'policies/terms': {
-    eyebrow: 'Policy',
     title: 'Terms of service',
     summary:
       'These terms explain the basic roles in Frizi: clients book through Frizi, professionals manage services and CRM, and Frizi operates the software platform.',
@@ -1204,7 +1200,6 @@ const infoPages: Record<string, InfoPage> = {
     cta: { label: 'Privacy policy', href: '/policies/privacy' },
   },
   'policies/privacy': {
-    eyebrow: 'Policy',
     title: 'Privacy policy',
     summary:
       'Frizi handles sensitive client profile details, hair photos, reviews, booking notes, and payment metadata, so the policy is written around consent and minimum necessary access.',
@@ -1218,7 +1213,6 @@ const infoPages: Record<string, InfoPage> = {
     cta: { label: 'Return policy', href: '/policies/returns' },
   },
   'policies/shipping': {
-    eyebrow: 'Policy',
     title: 'Shipping policy',
     summary:
       'Frizi product orders are intended to ship from approved suppliers, wholesalers, Amazon MCF, or 3PL partners while the client sees Frizi as the store experience.',
@@ -1232,7 +1226,6 @@ const infoPages: Record<string, InfoPage> = {
     cta: { label: 'Fulfillment help', href: '/help/fulfillment' },
   },
   'policies/returns': {
-    eyebrow: 'Policy',
     title: 'Returns and refunds',
     summary:
       'This policy separates service payments from product orders and keeps client support routed through Frizi.',
@@ -1246,7 +1239,6 @@ const infoPages: Record<string, InfoPage> = {
     cta: { label: 'Payments help', href: '/help/payments' },
   },
   'policies/marketplace': {
-    eyebrow: 'Policy',
     title: 'Marketplace policy',
     summary:
       'Frizi connects clients with independent professionals while also selling selected products through an admin-managed catalogue.',
@@ -2545,7 +2537,6 @@ function DesktopMobilePrompt({
 
 function InfoPageView({ page }: { page?: InfoPage }) {
   const activePage = page ?? {
-    eyebrow: 'Frizi',
     title: 'Page not found',
     summary: 'This Frizi help or policy page is not available yet.',
     points: ['Open the app or choose one of the published help links.'],
@@ -2557,9 +2548,6 @@ function InfoPageView({ page }: { page?: InfoPage }) {
       <section className="mx-auto max-w-3xl rounded-[28px] border border-white/10 bg-white/[0.05] p-5 shadow-2xl shadow-black/35 sm:p-8">
         <div className="flex items-center gap-3">
           <ShieldCheck className="text-[#f4c430]" size={30} />
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-[#f4c430]">
-            {activePage.eyebrow}
-          </p>
         </div>
         <h1 className="mt-4 text-4xl font-black leading-tight sm:text-5xl">
           {activePage.title}
@@ -3039,7 +3027,6 @@ function InviteLanding({
 function clientAuthContent(intent: ClientAuthIntent, mode: 'signup' | 'signin') {
   if (intent === 'save-pro') {
     return {
-      eyebrow: 'Save this Pro',
       title: mode === 'signup' ? 'Create your free account' : 'Sign in to save this Pro',
       description:
         'Save this professional to My Pros so you can find them again later.',
@@ -3047,7 +3034,6 @@ function clientAuthContent(intent: ClientAuthIntent, mode: 'signup' | 'signin') 
   }
   if (intent === 'booking' || intent === 'promo') {
     return {
-      eyebrow: 'Book on Frizi',
       title: mode === 'signup' ? 'Create your free account' : 'Sign in to book',
       description:
         'Your booking context will stay saved while you sign in.',
@@ -3055,14 +3041,12 @@ function clientAuthContent(intent: ClientAuthIntent, mode: 'signup' | 'signin') 
   }
   if (intent === 'messages') {
     return {
-      eyebrow: 'Message on Frizi',
       title: mode === 'signup' ? 'Create your free account' : 'Sign in to message',
       description:
         'Message a professional through your Frizi account.',
     };
   }
   return {
-    eyebrow: mode === 'signup' ? 'Free client account' : 'Welcome back',
     title: mode === 'signup' ? 'Create your Frizi account' : 'Sign in to Frizi',
     description: '',
   };
@@ -3573,10 +3557,7 @@ function ClientAuthModal({
       >
         <div className="flex shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
           <div>
-            <p className="text-sm font-black text-[#f4c430]">
-              {content.eyebrow}
-            </p>
-            <h2 className="mt-1 text-2xl font-black sm:text-3xl">
+            <h2 className="text-2xl font-black sm:text-3xl">
               {verificationEmail
                 ? 'Check your email'
                 : content.title}
