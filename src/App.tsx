@@ -231,6 +231,8 @@ const clientOAuthContextStorageKey = 'frizi-client-oauth-context';
 const pendingInviteStorageKey = 'frizi-client-pending-invite';
 const pendingSaveProfessionalStorageKey = 'frizi-client-pending-save-professional';
 const locationPromptStorageKey = 'frizi-client-location-prompt-complete';
+const friziProPublicUrl = 'https://pro.frizi.ca';
+const friziSalonPublicUrl = 'https://salon.frizi.ca';
 
 type ClientNavKey =
   | 'appointments'
@@ -1325,17 +1327,10 @@ function App() {
       .auth.getSession()
       .then(async ({ data }) => {
         if (!data.session?.access_token) return;
+        if (redirectWrongFriziClientAccount(data.session.user)) return;
         const authContext = readClientOAuthContext();
         const session = clientSessionFromSupabaseSession(data.session);
-        await ensureCanonicalClientProfile(
-          data.session.user,
-          session.name,
-        ).catch((error) =>
-          console.warn(
-            '[frizi-client-profile-upsert]',
-            error instanceof Error ? error.message : error,
-          ),
-        );
+        await ensureCanonicalClientProfile(data.session.user, session.name);
         setClientSession(session);
         window.localStorage.setItem(
           clientSessionStorageKey,
@@ -2680,6 +2675,25 @@ function readFriziAccountIntent(user: SupabaseUser) {
   return typeof rawIntent === 'string' ? rawIntent : '';
 }
 
+function crossAppCallbackForIntent(intent: string) {
+  if (intent === 'professional') {
+    return `${friziProPublicUrl}/onboarding`;
+  }
+  if (intent === 'salon_owner') {
+    return `${friziSalonPublicUrl}/auth/callback?frizi_app=salon&frizi_account_type=salon_owner&next=/`;
+  }
+  return '';
+}
+
+function redirectWrongFriziClientAccount(user: SupabaseUser) {
+  const accountIntent = readFriziAccountIntent(user);
+  if (!accountIntent || accountIntent === 'client') return false;
+  const destination = crossAppCallbackForIntent(accountIntent);
+  if (!destination) return false;
+  window.location.replace(`${destination}${window.location.hash || ''}`);
+  return true;
+}
+
 async function ensureCanonicalClientProfile(
   user: SupabaseUser,
   fallbackName?: string,
@@ -3444,6 +3458,8 @@ function ClientAuthModal({
         );
         return;
       }
+      if (redirectWrongFriziClientAccount(data.session.user)) return;
+      await ensureCanonicalClientProfile(data.session.user, trimmedName);
 
       onComplete(
         {
